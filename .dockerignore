@@ -1,0 +1,7 @@
+.git
+node_modules
+.deployrepo
+examples/beforest-conversational-agent/.venv
+examples/beforest-conversational-agent/__pycache__
+examples/beforest-conversational-agent/.env
+convex/_generated
