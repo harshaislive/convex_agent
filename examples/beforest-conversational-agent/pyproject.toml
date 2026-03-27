@@ -16,5 +16,3 @@ dependencies = [
 [dependency-groups]
 dev = []
 
-[tool.uv.sources]
-deepagents = { path = "../../libs/deepagents", editable = true }
