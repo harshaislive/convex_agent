@@ -2,8 +2,8 @@
 import traceback
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse`r`nfrom pydantic import BaseModel, Field
 
 from agent import generate_reply
 
@@ -56,5 +56,6 @@ def reply(request: ReplyRequest) -> ReplyResponse:
         reply=answer,
         thread_id=resolved_thread_id,
     )
+
 
 
