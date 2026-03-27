@@ -1,0 +1,8 @@
+{
+  "name": "beforest-convex-sync",
+  "private": true,
+  "version": "0.1.0",
+  "dependencies": {
+    "convex": "^1.34.1"
+  }
+}
