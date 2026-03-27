@@ -1,3 +1,5 @@
+﻿import logging
+import traceback
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
@@ -54,3 +56,4 @@ def reply(request: ReplyRequest) -> ReplyResponse:
         reply=answer,
         thread_id=resolved_thread_id,
     )
+
