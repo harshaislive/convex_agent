@@ -1,9 +1,10 @@
-﻿import logging
+import os
 import traceback
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse`r`nfrom pydantic import BaseModel, Field
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from agent import generate_reply
 
@@ -36,7 +37,7 @@ def health() -> dict[str, bool]:
 
 
 @app.post("/reply", response_model=ReplyResponse)
-def reply(request: ReplyRequest) -> ReplyResponse:
+def reply(request: ReplyRequest) -> ReplyResponse | JSONResponse:
     """Generate a reply and optionally push it to ManyChat."""
     try:
         answer = generate_reply(
@@ -48,7 +49,11 @@ def reply(request: ReplyRequest) -> ReplyResponse:
             push_to_manychat=request.push_to_manychat,
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        detail = str(exc)
+        if os.getenv("DEBUG_REPLY_ERRORS", "").strip().lower() == "true":
+            detail = traceback.format_exc()
+        print(detail, flush=True)
+        return JSONResponse(status_code=500, content={"detail": detail})
 
     resolved_thread_id = request.thread_id or (f"ig:{request.user_id}" if request.user_id else "")
     return ReplyResponse(
@@ -56,6 +61,3 @@ def reply(request: ReplyRequest) -> ReplyResponse:
         reply=answer,
         thread_id=resolved_thread_id,
     )
-
-
-
