@@ -72,7 +72,7 @@ def _resolve_thread_id(thread_id: str | None, user_id: str | None) -> str:
     if thread_id:
         return thread_id
     if user_id:
-        return f"ig:{user_id}"
+        return user_id
     return f"beforest-{uuid.uuid4()}"
 
 
@@ -190,48 +190,41 @@ def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
         raise RuntimeError(msg)
 
 
-def _load_conversation_history(thread_id: str) -> list[dict[str, Any]]:
-    """Load previous conversation messages from Convex for memory context."""
-    convex_http_action_url = os.getenv("CONVEX_HTTP_ACTION_URL", "").strip()
-    if not convex_http_action_url:
-        return []
-    shared_secret = os.getenv("AGENT_SHARED_SECRET", "").strip()
-    if not shared_secret:
-        return []
+def _get_history_path(thread_id: str) -> Path:
+    """Get the path to the history file for a given thread."""
+    memory_dir = EXAMPLE_DIR / "memory"
+    memory_dir.mkdir(exist_ok=True)
+    return memory_dir / f"{thread_id}.jsonl"
 
-    base_url = convex_http_action_url.replace("/instagram/store-dm-event", "")
-    history_url = (
-        f"{base_url}/instagram/conversation-history?threadId={thread_id}&limit=20"
-    )
 
-    request = Request(
-        history_url,
-        headers={"x-agent-secret": shared_secret},
-        method="GET",
-    )
+def _load_thread_history(thread_id: str) -> list[dict[str, str]]:
+    """Load conversation history from local file for a given thread."""
+    path = _get_history_path(thread_id)
+    if not path.exists():
+        return []
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310
-            raw_response = response.read().decode("utf-8", errors="replace")
-    except HTTPError:
+        messages: list[dict[str, str]] = []
+        with path.open("r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    messages.append(json.loads(line))
+        return messages
+    except (json.JSONDecodeError, OSError):
         return []
 
+
+def _append_to_history(thread_id: str, role: str, content: str) -> None:
+    """Append a message to the local history file for a given thread."""
+    path = _get_history_path(thread_id)
     try:
-        return json.loads(raw_response)
-    except json.JSONDecodeError:
-        return []
-
-
-def _build_history_messages(history: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Convert Convex history records into agent message format."""
-    messages: list[dict[str, str]] = []
-    for msg in history:
-        if msg.get("message"):
-            messages.append({"role": "user", "content": str(msg["message"])})
-        if msg.get("agentReplyText"):
-            messages.append(
-                {"role": "assistant", "content": str(msg["agentReplyText"])}
+        with path.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps({"role": role, "content": content}, ensure_ascii=False)
+                + "\n"
             )
-    return messages
+    except OSError:
+        pass
 
 
 def _save_event_to_convex(
@@ -299,7 +292,6 @@ def _save_event_to_convex(
 
     payload: dict[str, Any] = {
         "contactId": str(contact_id),
-        "threadId": thread_id,
         "message": inbound_message,
         "receivedAt": now,
         "agentReplied": True,
@@ -307,7 +299,6 @@ def _save_event_to_convex(
         "agentReplyText": reply_text,
         "lastReplyType": "agent",
         "rawPayload": {
-            "threadId": thread_id,
             "userId": user_id,
             "manychatSubscriberId": manychat_subscriber_id,
             "subscriberData": subscriber_data,
@@ -482,9 +473,7 @@ def generate_reply(
     agent = create_beforest_agent()
     resolved_thread_id = _resolve_thread_id(thread_id, user_id)
     context_messages = _build_context_messages(user_id, subscriber_data or {})
-
-    history = _load_conversation_history(resolved_thread_id)
-    history_messages = _build_history_messages(history)
+    history_messages = _load_thread_history(resolved_thread_id)
 
     result = agent.invoke(
         {
@@ -498,6 +487,10 @@ def generate_reply(
     )
     final_message = result["messages"][-1]
     answer = str(getattr(final_message, "content", str(final_message)))
+
+    _append_to_history(resolved_thread_id, "user", question)
+    _append_to_history(resolved_thread_id, "assistant", answer)
+
     resolved_manychat_subscriber_id = _resolve_manychat_subscriber_id(
         manychat_subscriber_id,
         subscriber_data or {},
