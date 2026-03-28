@@ -21,4 +21,27 @@ http.route({
   }),
 });
 
+http.route({
+  path: "/instagram/conversation-history",
+  method: "GET",
+  handler: httpAction(async (ctx, req) => {
+    const providedSecret = req.headers.get("x-agent-secret");
+    const deploymentSecret = process.env.AGENT_SHARED_SECRET;
+    if (!deploymentSecret || providedSecret !== deploymentSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    const url = new URL(req.url);
+    const threadId = url.searchParams.get("threadId");
+    if (!threadId) {
+      return new Response("threadId is required", { status: 400 });
+    }
+    const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
+    const messages = await ctx.runQuery(api.conversationHistory.getConversationHistory, {
+      threadId,
+      limit,
+    });
+    return Response.json(messages);
+  }),
+});
+
 export default http;

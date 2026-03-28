@@ -22,6 +22,7 @@ export const storeAgentDmEvent = mutation({
     agentReplyAt: v.optional(v.float64()),
     agentReplyText: v.optional(v.string()),
     lastReplyType: v.optional(v.string()),
+    threadId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("instagramConversations", args);

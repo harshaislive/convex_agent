@@ -190,6 +190,50 @@ def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
         raise RuntimeError(msg)
 
 
+def _load_conversation_history(thread_id: str) -> list[dict[str, Any]]:
+    """Load previous conversation messages from Convex for memory context."""
+    convex_http_action_url = os.getenv("CONVEX_HTTP_ACTION_URL", "").strip()
+    if not convex_http_action_url:
+        return []
+    shared_secret = os.getenv("AGENT_SHARED_SECRET", "").strip()
+    if not shared_secret:
+        return []
+
+    base_url = convex_http_action_url.replace("/instagram/store-dm-event", "")
+    history_url = (
+        f"{base_url}/instagram/conversation-history?threadId={thread_id}&limit=20"
+    )
+
+    request = Request(
+        history_url,
+        headers={"x-agent-secret": shared_secret},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            raw_response = response.read().decode("utf-8", errors="replace")
+    except HTTPError:
+        return []
+
+    try:
+        return json.loads(raw_response)
+    except json.JSONDecodeError:
+        return []
+
+
+def _build_history_messages(history: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Convert Convex history records into agent message format."""
+    messages: list[dict[str, str]] = []
+    for msg in history:
+        if msg.get("message"):
+            messages.append({"role": "user", "content": str(msg["message"])})
+        if msg.get("agentReplyText"):
+            messages.append(
+                {"role": "assistant", "content": str(msg["agentReplyText"])}
+            )
+    return messages
+
+
 def _save_event_to_convex(
     *,
     user_id: str | None,
@@ -255,6 +299,7 @@ def _save_event_to_convex(
 
     payload: dict[str, Any] = {
         "contactId": str(contact_id),
+        "threadId": thread_id,
         "message": inbound_message,
         "receivedAt": now,
         "agentReplied": True,
@@ -437,8 +482,18 @@ def generate_reply(
     agent = create_beforest_agent()
     resolved_thread_id = _resolve_thread_id(thread_id, user_id)
     context_messages = _build_context_messages(user_id, subscriber_data or {})
+
+    history = _load_conversation_history(resolved_thread_id)
+    history_messages = _build_history_messages(history)
+
     result = agent.invoke(
-        {"messages": [*context_messages, {"role": "user", "content": question}]},
+        {
+            "messages": [
+                *history_messages,
+                *context_messages,
+                {"role": "user", "content": question},
+            ]
+        },
         config={"configurable": {"thread_id": resolved_thread_id}},
     )
     final_message = result["messages"][-1]
