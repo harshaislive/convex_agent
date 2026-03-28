@@ -253,55 +253,78 @@ def _save_event_to_convex(
                 return value
         return None
 
-    payload = {
+    payload: dict[str, Any] = {
         "contactId": str(contact_id),
         "message": inbound_message,
-        "name": _optional_string("name", "first_name", "full_name"),
-        "instagramUserId": _optional_string("instagram_user_id", "instagramUserId")
-        or user_id,
-        "instagramAccountName": _optional_string(
-            "instagram_account_name", "instagramAccountName", "account_name"
-        ),
-        "igFollowersCount": _optional_float(
-            "ig_followers_count",
-            "igFollowersCount",
-            "followers_count",
-            "follower_count",
-            "ig_followers",
-            "followers",
-        ),
-        "igMessagingWindow": _optional_string(
-            "ig_messaging_window", "igMessagingWindow"
-        ),
-        "isIgAccountFollowUser": _optional_bool(
-            "is_ig_account_follow_user", "isIgAccountFollowUser", "account_follows_user"
-        ),
-        "isIgAccountFollower": _optional_bool(
-            "is_ig_account_follower",
-            "isIgAccountFollower",
-            "is_follower",
-            "follows_account",
-        ),
-        "isIgVerifiedUser": _optional_bool(
-            "is_ig_verified_user", "isIgVerifiedUser", "is_verified", "verified"
-        ),
-        "lastIgInteraction": _optional_string(
-            "last_ig_interaction", "lastIgInteraction"
-        ),
-        "lastIgSeen": _optional_string("last_ig_seen", "lastIgSeen"),
-        "optinInstagram": _optional_bool("optin_instagram", "optinInstagram"),
+        "receivedAt": now,
+        "agentReplied": True,
+        "agentReplyAt": now,
+        "agentReplyText": reply_text,
+        "lastReplyType": "agent",
         "rawPayload": {
             "threadId": thread_id,
             "userId": user_id,
             "manychatSubscriberId": manychat_subscriber_id,
             "subscriberData": subscriber_data,
         },
-        "receivedAt": now,
-        "agentReplied": True,
-        "agentReplyAt": now,
-        "agentReplyText": reply_text,
-        "lastReplyType": "agent",
     }
+
+    if (val := _optional_string("name", "first_name", "full_name")) is not None:
+        payload["name"] = val
+    if (val := _optional_string("instagram_user_id", "instagramUserId")) is not None:
+        payload["instagramUserId"] = val
+    elif user_id:
+        payload["instagramUserId"] = user_id
+    if (
+        val := _optional_string(
+            "instagram_account_name", "instagramAccountName", "account_name"
+        )
+    ) is not None:
+        payload["instagramAccountName"] = val
+    if (
+        val := _optional_float(
+            "ig_followers_count",
+            "igFollowersCount",
+            "followers_count",
+            "follower_count",
+            "ig_followers",
+            "followers",
+        )
+    ) is not None:
+        payload["igFollowersCount"] = val
+    if (
+        val := _optional_string("ig_messaging_window", "igMessagingWindow")
+    ) is not None:
+        payload["igMessagingWindow"] = val
+    if (
+        val := _optional_bool(
+            "is_ig_account_follow_user", "isIgAccountFollowUser", "account_follows_user"
+        )
+    ) is not None:
+        payload["isIgAccountFollowUser"] = val
+    if (
+        val := _optional_bool(
+            "is_ig_account_follower",
+            "isIgAccountFollower",
+            "is_follower",
+            "follows_account",
+        )
+    ) is not None:
+        payload["isIgAccountFollower"] = val
+    if (
+        val := _optional_bool(
+            "is_ig_verified_user", "isIgVerifiedUser", "is_verified", "verified"
+        )
+    ) is not None:
+        payload["isIgVerifiedUser"] = val
+    if (
+        val := _optional_string("last_ig_interaction", "lastIgInteraction")
+    ) is not None:
+        payload["lastIgInteraction"] = val
+    if (val := _optional_string("last_ig_seen", "lastIgSeen")) is not None:
+        payload["lastIgSeen"] = val
+    if (val := _optional_bool("optin_instagram", "optinInstagram")) is not None:
+        payload["optinInstagram"] = val
 
     request = Request(
         convex_http_action_url,
