@@ -10,7 +10,7 @@ export const getConversationHistory = query({
     const limit = args.limit ?? 20;
     const messages = await ctx.db
       .query("instagramConversations")
-      .withIndex("by_thread_id", (q) => q.eq("threadId", args.threadId))
+      .withIndex("by_instagram_user_id", (q) => q.eq("instagramUserId", args.threadId))
       .order("asc")
       .take(limit);
 

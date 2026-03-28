@@ -190,41 +190,41 @@ def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
         raise RuntimeError(msg)
 
 
-def _get_history_path(thread_id: str) -> Path:
-    """Get the path to the history file for a given thread."""
-    memory_dir = EXAMPLE_DIR / "memory"
-    memory_dir.mkdir(exist_ok=True)
-    return memory_dir / f"{thread_id}.jsonl"
+def _get_convex_base() -> str | None:
+    """Get Convex base URL from env."""
+    url = os.getenv("CONVEX_HTTP_ACTION_URL", "").strip()
+    if not url:
+        return None
+    return url.replace("/instagram/store-dm-event", "")
 
 
-def _load_thread_history(thread_id: str) -> list[dict[str, str]]:
-    """Load conversation history from local file for a given thread."""
-    path = _get_history_path(thread_id)
-    if not path.exists():
+def _load_thread_history_from_convex(contact_id: str) -> list[dict[str, str]]:
+    """Load conversation history from Convex for a ManyChat contact id."""
+    base = _get_convex_base()
+    if not base:
         return []
-    try:
-        messages: list[dict[str, str]] = []
-        with path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    messages.append(json.loads(line))
-        return messages
-    except (json.JSONDecodeError, OSError):
+    secret = os.getenv("AGENT_SHARED_SECRET", "").strip()
+    if not secret:
         return []
 
-
-def _append_to_history(thread_id: str, role: str, content: str) -> None:
-    """Append a message to the local history file for a given thread."""
-    path = _get_history_path(thread_id)
+    url = f"{base}/instagram/conversation-history?contactId={contact_id}"
+    request = Request(
+        url,
+        headers={"x-agent-secret": secret},
+        method="GET",
+    )
     try:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(
-                json.dumps({"role": role, "content": content}, ensure_ascii=False)
-                + "\n"
-            )
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", errors="replace")
+    except HTTPError:
+        return []
     except OSError:
-        pass
+        return []
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return []
 
 
 def _save_event_to_convex(
@@ -472,8 +472,18 @@ def generate_reply(
     """Generate a reply, optionally pushing it back to ManyChat."""
     agent = create_beforest_agent()
     resolved_thread_id = _resolve_thread_id(thread_id, user_id)
+    resolved_manychat_subscriber_id = _resolve_manychat_subscriber_id(
+        manychat_subscriber_id,
+        subscriber_data or {},
+    )
     context_messages = _build_context_messages(user_id, subscriber_data or {})
-    history_messages = _load_thread_history(resolved_thread_id)
+
+    if resolved_manychat_subscriber_id:
+        history_messages = _load_thread_history_from_convex(
+            resolved_manychat_subscriber_id
+        )
+    else:
+        history_messages = []
 
     result = agent.invoke(
         {
@@ -488,13 +498,6 @@ def generate_reply(
     final_message = result["messages"][-1]
     answer = str(getattr(final_message, "content", str(final_message)))
 
-    _append_to_history(resolved_thread_id, "user", question)
-    _append_to_history(resolved_thread_id, "assistant", answer)
-
-    resolved_manychat_subscriber_id = _resolve_manychat_subscriber_id(
-        manychat_subscriber_id,
-        subscriber_data or {},
-    )
     if push_to_manychat and resolved_manychat_subscriber_id:
         _push_manychat_reply(resolved_manychat_subscriber_id, answer)
     _save_event_to_convex(

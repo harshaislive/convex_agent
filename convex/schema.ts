@@ -25,12 +25,10 @@ export default defineSchema({
     optinInstagram: v.optional(v.boolean()),
     rawPayload: v.optional(v.any()),
     receivedAt: v.float64(),
-    threadId: v.optional(v.string()),
   })
     .index("by_agent_replied", ["agentReplied"])
     .index("by_contact_id", ["contactId"])
-    .index("by_instagram_user_id", ["instagramUserId"])
-    .index("by_thread_id", ["threadId"]),
+    .index("by_instagram_user_id", ["instagramUserId"]),
   signal_conversations: defineTable({
     contactId: v.string(),
     createdAt: v.float64(),

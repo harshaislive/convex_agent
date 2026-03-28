@@ -31,16 +31,34 @@ http.route({
       return new Response("Unauthorized", { status: 401 });
     }
     const url = new URL(req.url);
-    const threadId = url.searchParams.get("threadId");
-    if (!threadId) {
-      return new Response("threadId is required", { status: 400 });
+    const contactId = url.searchParams.get("contactId");
+    if (!contactId) {
+      return new Response("contactId is required", { status: 400 });
     }
-    const limit = parseInt(url.searchParams.get("limit") ?? "20", 10);
-    const messages = await ctx.runQuery(api.conversationHistory.getConversationHistory, {
-      threadId,
-      limit,
+    const messages = await ctx.runQuery(api.instagramDm.getMessagesByContactId, {
+      contactId,
     });
     return Response.json(messages);
+  }),
+});
+
+http.route({
+  path: "/instagram/append-message",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const providedSecret = req.headers.get("x-agent-secret");
+    const deploymentSecret = process.env.AGENT_SHARED_SECRET;
+    if (!deploymentSecret || providedSecret !== deploymentSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    const body = await req.json();
+    await ctx.runMutation(api.signalConversations.appendInstagramStyleMessage, {
+      contactId: body.contactId,
+      role: body.role,
+      content: body.content,
+      timestamp: body.timestamp,
+    });
+    return Response.json({ ok: true });
   }),
 });
 
