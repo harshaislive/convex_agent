@@ -8,12 +8,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from deepagents import create_deep_agent
 from deepagents.backends import FilesystemBackend
 from dotenv import load_dotenv
-from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.agents.middleware.types import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
@@ -45,7 +50,7 @@ def _sanitize_message_content(message: BaseMessage) -> BaseMessage:
     if len(content) > 0:
         return message
 
-    return message.model_copy(update={"content": [{"type": "text", "text": " "}]} )
+    return message.model_copy(update={"content": [{"type": "text", "text": " "}]})
 
 
 class AzureMessageSanitizerMiddleware(AgentMiddleware):  # type: ignore[type-arg]
@@ -56,7 +61,9 @@ class AzureMessageSanitizerMiddleware(AgentMiddleware):  # type: ignore[type-arg
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse:
-        sanitized_messages = [_sanitize_message_content(message) for message in request.messages]
+        sanitized_messages = [
+            _sanitize_message_content(message) for message in request.messages
+        ]
         return handler(request.override(messages=sanitized_messages))
 
 
@@ -80,7 +87,9 @@ def _parse_subscriber_data(raw: str | None) -> dict[str, Any]:
     return parsed
 
 
-def _build_context_messages(user_id: str | None, subscriber_data: dict[str, Any]) -> list[dict[str, str]]:
+def _build_context_messages(
+    user_id: str | None, subscriber_data: dict[str, Any]
+) -> list[dict[str, str]]:
     """Build a compact context message for platform metadata."""
     context: dict[str, Any] = {}
     if user_id:
@@ -108,7 +117,12 @@ def _resolve_manychat_subscriber_id(
     if explicit_subscriber_id:
         return explicit_subscriber_id
 
-    for key in ("manychat_subscriber_id", "subscriber_id", "contact_id", "manychat_contact_id"):
+    for key in (
+        "manychat_subscriber_id",
+        "subscriber_id",
+        "contact_id",
+        "manychat_contact_id",
+    ):
         value = subscriber_data.get(key)
         if value is None:
             continue
@@ -148,7 +162,9 @@ def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
         msg = "MANYCHAT_API_TOKEN is required to push replies to ManyChat."
         raise ValueError(msg)
 
-    api_base_url = os.getenv("MANYCHAT_API_BASE_URL", "https://api.manychat.com").rstrip("/")
+    api_base_url = os.getenv(
+        "MANYCHAT_API_BASE_URL", "https://api.manychat.com"
+    ).rstrip("/")
     channel = os.getenv("MANYCHAT_CHANNEL", "instagram").strip().lower() or "instagram"
     payload = {
         "subscriber_id": int(subscriber_id),
@@ -195,7 +211,13 @@ def _save_event_to_convex(
 
     contact_id = manychat_subscriber_id
     if not contact_id:
-        for key in ("contact_id", "contactId", "subscriber_id", "subscriberId", "manychat_subscriber_id"):
+        for key in (
+            "contact_id",
+            "contactId",
+            "subscriber_id",
+            "subscriberId",
+            "manychat_subscriber_id",
+        ):
             value = subscriber_data.get(key)
             if value is not None:
                 contact_id = str(value)
@@ -235,14 +257,37 @@ def _save_event_to_convex(
         "contactId": str(contact_id),
         "message": inbound_message,
         "name": _optional_string("name", "first_name", "full_name"),
-        "instagramUserId": _optional_string("instagram_user_id", "instagramUserId") or user_id,
-        "instagramAccountName": _optional_string("instagram_account_name", "instagramAccountName", "account_name"),
-        "igFollowersCount": _optional_float("ig_followers_count", "igFollowersCount", "followers_count", "follower_count", "ig_followers", "followers"),
-        "igMessagingWindow": _optional_string("ig_messaging_window", "igMessagingWindow"),
-        "isIgAccountFollowUser": _optional_bool("is_ig_account_follow_user", "isIgAccountFollowUser", "account_follows_user"),
-        "isIgAccountFollower": _optional_bool("is_ig_account_follower", "isIgAccountFollower", "is_follower", "follows_account"),
-        "isIgVerifiedUser": _optional_bool("is_ig_verified_user", "isIgVerifiedUser", "is_verified", "verified"),
-        "lastIgInteraction": _optional_string("last_ig_interaction", "lastIgInteraction"),
+        "instagramUserId": _optional_string("instagram_user_id", "instagramUserId")
+        or user_id,
+        "instagramAccountName": _optional_string(
+            "instagram_account_name", "instagramAccountName", "account_name"
+        ),
+        "igFollowersCount": _optional_float(
+            "ig_followers_count",
+            "igFollowersCount",
+            "followers_count",
+            "follower_count",
+            "ig_followers",
+            "followers",
+        ),
+        "igMessagingWindow": _optional_string(
+            "ig_messaging_window", "igMessagingWindow"
+        ),
+        "isIgAccountFollowUser": _optional_bool(
+            "is_ig_account_follow_user", "isIgAccountFollowUser", "account_follows_user"
+        ),
+        "isIgAccountFollower": _optional_bool(
+            "is_ig_account_follower",
+            "isIgAccountFollower",
+            "is_follower",
+            "follows_account",
+        ),
+        "isIgVerifiedUser": _optional_bool(
+            "is_ig_verified_user", "isIgVerifiedUser", "is_verified", "verified"
+        ),
+        "lastIgInteraction": _optional_string(
+            "last_ig_interaction", "lastIgInteraction"
+        ),
         "lastIgSeen": _optional_string("last_ig_seen", "lastIgSeen"),
         "optinInstagram": _optional_bool("optin_instagram", "optinInstagram"),
         "rawPayload": {
@@ -268,12 +313,17 @@ def _save_event_to_convex(
         method="POST",
     )
 
-    with urlopen(request, timeout=15) as response:  # noqa: S310
-        raw_response = response.read().decode("utf-8", errors="replace")
+    try:
+        with urlopen(request, timeout=15) as response:  # noqa: S310
+            raw_response = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        msg = f"Convex HTTP action failed with {exc.code}: {error_body}"
+        raise RuntimeError(msg) from exc
 
     parsed_response = json.loads(raw_response)
     if parsed_response.get("ok") is not True:
-        msg = f"Convex HTTP action failed: {raw_response}"
+        msg = f"Convex HTTP action returned ok=false: {raw_response}"
         raise RuntimeError(msg)
 
 
@@ -302,9 +352,9 @@ def _build_model():
         model_name = os.getenv("AZURE_AI_MODEL")
         base_url = _normalize_azure_ai_base_url(
             os.getenv(
-            "AZURE_AI_BASE_URL",
-            "https://azureuserbeforest.services.ai.azure.com/openai/v1/",
-        )
+                "AZURE_AI_BASE_URL",
+                "https://azureuserbeforest.services.ai.azure.com/openai/v1/",
+            )
         )
 
         missing = [
@@ -416,7 +466,9 @@ def run_interactive(
     """Run a small local chat loop for conversational testing."""
     agent = create_beforest_agent()
     resolved_thread_id = _resolve_thread_id(thread_id, user_id)
-    messages: list[dict[str, str]] = _build_context_messages(user_id, subscriber_data or {})
+    messages: list[dict[str, str]] = _build_context_messages(
+        user_id, subscriber_data or {}
+    )
 
     console.print(Panel("Beforest is ready. Type `exit` to stop.", border_style="cyan"))
 
@@ -493,6 +545,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
