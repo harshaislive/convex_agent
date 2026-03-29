@@ -37,6 +37,9 @@ EXAMPLE_DIR = Path(__file__).parent.resolve()
 BOT_LABEL = "Beforest"
 console = Console()
 URL_PATTERN = re.compile(r"https://[^\s)]+")
+MAIN_SITE_URL = "https://beforest.co"
+EXPERIENCES_URL = "https://experiences.beforest.co"
+BUTTON_LIMIT = 3
 
 
 def _sanitize_message_content(message: BaseMessage) -> BaseMessage:
@@ -129,30 +132,119 @@ def _resolve_manychat_subscriber_id(
         return str(value)
 
     return None
+def _normalize_manychat_text(reply_text: str) -> str:
+    """Convert model output into cleaner DM-friendly text."""
+    text = reply_text.replace("\r\n", "\n").strip()
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"(?m)^\s*[-*]\s+", "• ", text)
+    return text
 
 
-def _build_manychat_payload(reply_text: str, channel: str) -> dict[str, Any]:
-    """Build a ManyChat `sendContent` payload for a text reply."""
-    urls = URL_PATTERN.findall(reply_text)
+def _extract_urls(text: str) -> list[str]:
+    """Return unique URLs in first-seen order."""
+    seen: set[str] = set()
+    urls: list[str] = []
+    for url in URL_PATTERN.findall(text):
+        cleaned_url = url.rstrip(".,!?")
+        if cleaned_url in seen:
+            continue
+        seen.add(cleaned_url)
+        urls.append(cleaned_url)
+    return urls
+
+
+def _button_caption_for_url(url: str) -> str:
+    """Build a short button caption from a Beforest URL."""
+    lower_url = url.lower()
+    if "experiences.beforest.co" in lower_url:
+        return "Explore Experiences"
+    if "/collect" in lower_url:
+        return "View Collectives"
+    if "/about" in lower_url:
+        return "About Beforest"
+    if "/contact" in lower_url or "/connect" in lower_url:
+        return "Contact Team"
+    if "beforest.co" in lower_url:
+        return "Explore Beforest"
+    return "Open Link"
+
+
+def _suggest_canonical_urls(question: str, reply_text: str) -> list[str]:
+    """Add stable Beforest destinations when the model omits a useful link."""
+    combined = f"{question}\n{reply_text}".lower()
+    urls: list[str] = []
+
+    if any(term in combined for term in ("experience", "retreat", "stay", "visit")):
+        urls.append(EXPERIENCES_URL)
+
+    if any(
+        term in combined
+        for term in ("collective", "community", "join", "membership", "beforest")
+    ):
+        urls.append(MAIN_SITE_URL)
+
+    if not urls:
+        urls.append(MAIN_SITE_URL)
+
+    deduped_urls: list[str] = []
+    seen: set[str] = set()
+    for url in urls:
+        if url in seen:
+            continue
+        seen.add(url)
+        deduped_urls.append(url)
+    return deduped_urls
+
+
+def _build_manychat_buttons(urls: list[str]) -> list[dict[str, str]]:
+    """Create a small set of URL buttons for Instagram DM replies."""
+    buttons: list[dict[str, str]] = []
+    for url in urls[:BUTTON_LIMIT]:
+        buttons.append(
+            {
+                "type": "url",
+                "caption": _button_caption_for_url(url),
+                "url": url,
+            }
+        )
+    return buttons
+
+
+def _build_manychat_messages(question: str, reply_text: str) -> list[dict[str, Any]]:
+    """Compose a DM-friendly message list with concise text and useful buttons."""
+    normalized_text = _normalize_manychat_text(reply_text)
+    discovered_urls = _extract_urls(normalized_text)
+    urls = discovered_urls or _suggest_canonical_urls(question, normalized_text)
+
     message: dict[str, Any] = {
         "type": "text",
-        "text": reply_text,
+        "text": normalized_text,
     }
-    if urls:
-        message["buttons"] = [{"type": "url", "caption": "Open link", "url": urls[0]}]
+    buttons = _build_manychat_buttons(urls)
+    if buttons:
+        message["buttons"] = buttons
+
+    return [message]
+
+
+def _build_manychat_payload(reply_text: str, channel: str, question: str) -> dict[str, Any]:
+    """Build a ManyChat `sendContent` payload for a text reply."""
 
     return {
         "version": "v2",
         "content": {
             "type": channel,
-            "messages": [message],
+            "messages": _build_manychat_messages(question, reply_text),
             "actions": [],
             "quick_replies": [],
         },
     }
 
 
-def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
+def _push_manychat_reply(subscriber_id: str, reply_text: str, question: str) -> None:
     """Send the final reply to ManyChat using `sendContent`.
 
     This expects the conversation to be within ManyChat's allowed messaging window.
@@ -168,7 +260,7 @@ def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
     channel = os.getenv("MANYCHAT_CHANNEL", "instagram").strip().lower() or "instagram"
     payload = {
         "subscriber_id": int(subscriber_id),
-        "data": _build_manychat_payload(reply_text, channel),
+        "data": _build_manychat_payload(reply_text, channel, question),
     }
 
     request = Request(
@@ -499,7 +591,7 @@ def generate_reply(
     answer = str(getattr(final_message, "content", str(final_message)))
 
     if push_to_manychat and resolved_manychat_subscriber_id:
-        _push_manychat_reply(resolved_manychat_subscriber_id, answer)
+        _push_manychat_reply(resolved_manychat_subscriber_id, answer, question)
     _save_event_to_convex(
         user_id=user_id,
         thread_id=resolved_thread_id,
