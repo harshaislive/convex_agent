@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from agent import generate_reply
+from agent import generate_reply_bundle
 
 app = FastAPI(title="Beforest DM Agent", version="0.1.0")
 
@@ -28,6 +28,7 @@ class ReplyResponse(BaseModel):
     ok: bool
     reply: str
     thread_id: str
+    suggested_replies: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -40,7 +41,7 @@ def health() -> dict[str, bool]:
 def reply(request: ReplyRequest) -> ReplyResponse | JSONResponse:
     """Generate a reply and optionally push it to ManyChat."""
     try:
-        answer = generate_reply(
+        result = generate_reply_bundle(
             request.message,
             thread_id=request.thread_id,
             user_id=request.user_id,
@@ -58,6 +59,9 @@ def reply(request: ReplyRequest) -> ReplyResponse | JSONResponse:
     resolved_thread_id = request.thread_id or (f"ig:{request.user_id}" if request.user_id else "")
     return ReplyResponse(
         ok=True,
-        reply=answer,
-        thread_id=resolved_thread_id,
+        reply=str(result["reply"]),
+        thread_id=str(result["thread_id"] or resolved_thread_id),
+        suggested_replies=[
+            str(item) for item in result.get("suggested_replies", []) if item
+        ],
     )

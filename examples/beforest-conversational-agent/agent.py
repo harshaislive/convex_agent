@@ -40,6 +40,7 @@ URL_PATTERN = re.compile(r"https://[^\s)]+")
 MAIN_SITE_URL = "https://beforest.co"
 EXPERIENCES_URL = "https://experiences.beforest.co"
 BUTTON_LIMIT = 3
+SUGGESTED_REPLY_LIMIT = 3
 
 
 def _sanitize_message_content(message: BaseMessage) -> BaseMessage:
@@ -132,6 +133,41 @@ def _resolve_manychat_subscriber_id(
         return str(value)
 
     return None
+
+
+def _infer_suggested_replies(question: str, reply_text: str) -> list[str]:
+    """Infer a short list of suggested next replies for DM navigation."""
+    combined = f"{question}\n{reply_text}".lower()
+    suggestions: list[str] = []
+
+    def add(option: str) -> None:
+        if option not in suggestions:
+            suggestions.append(option)
+
+    if any(term in combined for term in ("collective", "community", "join", "member")):
+        add("Explore collectives")
+    if any(term in combined for term in ("experience", "retreat", "event", "activity")):
+        add("See experiences")
+    if any(term in combined for term in ("stay", "room", "hospitality", "bungalow")):
+        add("Explore stays")
+    if any(term in combined for term in ("10%", "ten percent", "lifestyle", "belonging")):
+        add("Understand 10%")
+    if any(term in combined for term in ("product", "coffee", "bewild", "shop", "order")):
+        add("See products")
+
+    add("Talk to team")
+    add("Start here")
+    return suggestions[:SUGGESTED_REPLY_LIMIT]
+
+
+def _append_suggested_replies(reply_text: str, suggestions: list[str]) -> str:
+    """Append lightweight next-step prompts to the DM text."""
+    if not suggestions:
+        return reply_text
+    prompt = "You can reply with: " + " | ".join(suggestions)
+    return f"{reply_text}\n\n{prompt}"
+
+
 def _normalize_manychat_text(reply_text: str) -> str:
     """Convert model output into cleaner DM-friendly text."""
     text = reply_text.replace("\r\n", "\n").strip()
@@ -216,12 +252,14 @@ def _build_manychat_buttons(urls: list[str]) -> list[dict[str, str]]:
 def _build_manychat_messages(question: str, reply_text: str) -> list[dict[str, Any]]:
     """Compose a DM-friendly message list with concise text and useful buttons."""
     normalized_text = _normalize_manychat_text(reply_text)
+    suggestions = _infer_suggested_replies(question, normalized_text)
+    display_text = _append_suggested_replies(normalized_text, suggestions)
     discovered_urls = _extract_urls(normalized_text)
     urls = discovered_urls or _suggest_canonical_urls(question, normalized_text)
 
     message: dict[str, Any] = {
         "type": "text",
-        "text": normalized_text,
+        "text": display_text,
     }
     buttons = _build_manychat_buttons(urls)
     if buttons:
@@ -552,7 +590,7 @@ def create_beforest_agent():
     )
 
 
-def generate_reply(
+def generate_reply_bundle(
     question: str,
     *,
     thread_id: str | None = None,
@@ -560,8 +598,8 @@ def generate_reply(
     subscriber_data: dict[str, Any] | None = None,
     manychat_subscriber_id: str | None = None,
     push_to_manychat: bool = True,
-) -> str:
-    """Generate a reply, optionally pushing it back to ManyChat."""
+) -> dict[str, Any]:
+    """Generate a reply and structured metadata for DM clients."""
     agent = create_beforest_agent()
     resolved_thread_id = _resolve_thread_id(thread_id, user_id)
     resolved_manychat_subscriber_id = _resolve_manychat_subscriber_id(
@@ -589,6 +627,7 @@ def generate_reply(
     )
     final_message = result["messages"][-1]
     answer = str(getattr(final_message, "content", str(final_message)))
+    suggested_replies = _infer_suggested_replies(question, answer)
 
     if push_to_manychat and resolved_manychat_subscriber_id:
         _push_manychat_reply(resolved_manychat_subscriber_id, answer, question)
@@ -600,7 +639,32 @@ def generate_reply(
         reply_text=answer,
         manychat_subscriber_id=resolved_manychat_subscriber_id,
     )
-    return answer
+    return {
+        "reply": answer,
+        "thread_id": resolved_thread_id,
+        "suggested_replies": suggested_replies,
+    }
+
+
+def generate_reply(
+    question: str,
+    *,
+    thread_id: str | None = None,
+    user_id: str | None = None,
+    subscriber_data: dict[str, Any] | None = None,
+    manychat_subscriber_id: str | None = None,
+    push_to_manychat: bool = True,
+) -> str:
+    """Generate a reply, optionally pushing it back to ManyChat."""
+    result = generate_reply_bundle(
+        question,
+        thread_id=thread_id,
+        user_id=user_id,
+        subscriber_data=subscriber_data,
+        manychat_subscriber_id=manychat_subscriber_id,
+        push_to_manychat=push_to_manychat,
+    )
+    return str(result["reply"])
 
 
 def run_one_shot(
