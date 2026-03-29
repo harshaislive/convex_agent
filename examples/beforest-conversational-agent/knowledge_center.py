@@ -13,6 +13,7 @@ from urllib.request import Request, urlopen
 
 
 EXAMPLE_DIR = Path(__file__).parent.resolve()
+KNOWLEDGE_DIR = EXAMPLE_DIR / "knowledge"
 KNOWLEDGE_CENTER_DIR = EXAMPLE_DIR / "knowledge_center"
 DOCS_DIR = KNOWLEDGE_CENTER_DIR / "docs"
 INDEX_PATH = KNOWLEDGE_CENTER_DIR / "index.json"
@@ -136,6 +137,10 @@ def _doc_path(slug: str) -> Path:
     return DOCS_DIR / f"{slug}.md"
 
 
+def _core_doc_slug(path: Path) -> str:
+    return f"core--{path.stem}"
+
+
 def _dedupe_slug(base_slug: str) -> str:
     slug = base_slug
     suffix = 2
@@ -203,11 +208,40 @@ def _fetch_url_content(
 
 
 def list_documents() -> list[dict[str, Any]]:
-    items = _load_index()
+    items = list(_load_index())
+    for path in KNOWLEDGE_DIR.glob("*.md"):
+        stat = path.stat()
+        items.append(
+            {
+                "slug": _core_doc_slug(path),
+                "title": path.stem.replace("_", " ").replace("-", " ").title(),
+                "source_type": "core",
+                "source_url": None,
+                "tags": ["built-in"],
+                "updated_at": datetime.fromtimestamp(
+                    stat.st_mtime, tz=timezone.utc
+                ).isoformat(),
+            }
+        )
     return sorted(items, key=lambda item: item.get("updated_at", ""), reverse=True)
 
 
 def read_document(slug: str) -> KnowledgeDocument:
+    if slug.startswith("core--"):
+        name = slug.removeprefix("core--")
+        path = KNOWLEDGE_DIR / f"{name}.md"
+        if not path.exists():
+            raise FileNotFoundError(slug)
+        stat = path.stat()
+        return KnowledgeDocument(
+            slug=slug,
+            title=path.stem.replace("_", " ").replace("-", " ").title(),
+            content=path.read_text(encoding="utf-8"),
+            source_type="core",
+            tags=["built-in"],
+            source_url=None,
+            updated_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        )
     for item in _load_index():
         if item.get("slug") != slug:
             continue
