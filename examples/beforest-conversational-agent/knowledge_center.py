@@ -369,132 +369,309 @@ def render_knowledge_center_html() -> str:
   <title>Knowledge Center</title>
   <style>
     :root {
-      --bg: #f3f1eb;
+      --bg: #f2ede4;
       --paper: #fffdf8;
-      --ink: #1e1d1a;
-      --muted: #6f6a61;
-      --line: #ddd6ca;
-      --accent: #163a2c;
-      --accent-soft: #e3efe9;
+      --panel: rgba(255, 252, 246, 0.88);
+      --panel-strong: rgba(255, 252, 246, 0.96);
+      --ink: #171512;
+      --muted: #6c655a;
+      --line: rgba(64, 49, 30, 0.12);
+      --line-strong: rgba(22, 58, 44, 0.24);
+      --accent: #17372d;
+      --accent-2: #a56439;
+      --accent-soft: rgba(23, 55, 45, 0.08);
       --danger: #a04632;
-      --shadow: 0 20px 60px rgba(27, 24, 18, 0.08);
+      --shadow: 0 24px 80px rgba(24, 18, 10, 0.1);
+      --radius: 28px;
     }
     * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
     body {
       margin: 0;
-      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
       background:
-        radial-gradient(circle at top left, rgba(214, 224, 214, 0.75), transparent 30%),
-        linear-gradient(180deg, #f7f4ee 0%, var(--bg) 100%);
-      min-height: 100vh;
+        radial-gradient(circle at top left, rgba(220, 229, 214, 0.8), transparent 28%),
+        radial-gradient(circle at top right, rgba(243, 212, 192, 0.55), transparent 30%),
+        linear-gradient(180deg, #f8f3eb 0%, var(--bg) 58%, #ebe3d8 100%);
+    }
+    button, input, textarea {
+      font: inherit;
     }
     .shell {
-      max-width: 1240px;
+      width: min(1380px, calc(100vw - 28px));
       margin: 0 auto;
-      padding: 24px;
+      padding: 22px 0 30px;
     }
     .hero {
-      display: flex;
-      justify-content: space-between;
-      gap: 20px;
-      align-items: flex-start;
-      margin-bottom: 20px;
+      position: relative;
+      display: grid;
+      grid-template-columns: 1.3fr 0.9fr;
+      gap: 18px;
+      margin-bottom: 18px;
     }
-    .hero h1 {
-      margin: 0;
-      font-size: clamp(2rem, 5vw, 3.6rem);
-      line-height: 0.95;
-      letter-spacing: -0.04em;
+    .hero-card, .hero-side {
+      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,251,245,0.72));
+      border: 1px solid rgba(255,255,255,0.7);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(14px);
+      border-radius: 32px;
+      padding: 26px;
     }
-    .hero p {
-      max-width: 520px;
-      color: var(--muted);
-      margin: 10px 0 0;
-      font-size: 0.98rem;
-      line-height: 1.5;
+    .hero-card::after {
+      content: "";
+      position: absolute;
+      inset: auto 18px 18px auto;
+      width: 160px;
+      height: 160px;
+      background: radial-gradient(circle, rgba(165,100,57,0.18), transparent 68%);
+      pointer-events: none;
+      filter: blur(6px);
     }
-    .badge {
-      padding: 10px 14px;
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
       border-radius: 999px;
-      background: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.76);
       border: 1px solid var(--line);
       color: var(--muted);
-      font-size: 0.82rem;
-      backdrop-filter: blur(10px);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.78rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
-    .grid {
+    .hero h1 {
+      margin: 14px 0 10px;
+      font-size: clamp(2.4rem, 6vw, 5rem);
+      line-height: 0.9;
+      letter-spacing: -0.06em;
+      font-weight: 600;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 52rem;
+      color: var(--muted);
+      font-size: 1rem;
+      line-height: 1.6;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    .hero-stats {
       display: grid;
-      grid-template-columns: 320px minmax(0, 1fr);
-      gap: 20px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 22px;
+    }
+    .stat {
+      border-radius: 22px;
+      padding: 15px 16px;
+      background: rgba(255,255,255,0.62);
+      border: 1px solid var(--line);
+    }
+    .stat strong {
+      display: block;
+      font-size: 1.4rem;
+      line-height: 1;
+      letter-spacing: -0.04em;
+    }
+    .stat span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .hero-side {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 16px;
+      background:
+        linear-gradient(180deg, rgba(19,55,45,0.95), rgba(19,55,45,0.84)),
+        radial-gradient(circle at top right, rgba(255,255,255,0.14), transparent 34%);
+      color: #f5efe6;
+    }
+    .hero-side h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      line-height: 1.05;
+      letter-spacing: -0.04em;
+    }
+    .hero-side p {
+      color: rgba(245,239,230,0.78);
+      font-size: 0.95rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    button {
+      appearance: none;
+      border: none;
+      border-radius: 999px;
+      padding: 11px 16px;
+      background: var(--accent);
+      color: #f8f5ef;
+      cursor: pointer;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.94rem;
+      transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
+      box-shadow: 0 8px 24px rgba(23,55,45,0.18);
+    }
+    button:hover {
+      transform: translateY(-1px);
+    }
+    button.secondary {
+      background: rgba(255,255,255,0.9);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      box-shadow: none;
+    }
+    button.ghost {
+      background: rgba(255,255,255,0.12);
+      color: #f8f5ef;
+      border: 1px solid rgba(255,255,255,0.16);
+      box-shadow: none;
+    }
+    .workspace {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1.04fr) minmax(320px, 0.96fr);
+      gap: 18px;
+      align-items: start;
     }
     .panel {
-      background: rgba(255, 253, 248, 0.84);
-      border: 1px solid rgba(221, 214, 202, 0.9);
-      border-radius: 28px;
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.72);
+      border-radius: var(--radius);
       box-shadow: var(--shadow);
       backdrop-filter: blur(14px);
       overflow: hidden;
     }
-    .panel-inner { padding: 20px; }
-    .section-title {
-      margin: 0 0 12px;
-      font-size: 0.84rem;
-      text-transform: uppercase;
+    .panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 18px 20px 12px;
+      border-bottom: 1px solid rgba(64,49,30,0.06);
+    }
+    .panel-title {
+      margin: 0;
+      font-size: 0.78rem;
       letter-spacing: 0.12em;
+      text-transform: uppercase;
       color: var(--muted);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    .panel-body {
+      padding: 18px 20px 20px;
+    }
+    .search {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255,255,255,0.88);
+      padding: 12px 14px;
+      color: var(--ink);
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      margin-bottom: 14px;
     }
     .doc-list {
       display: flex;
       flex-direction: column;
       gap: 10px;
-      max-height: 72vh;
+      max-height: calc(100vh - 320px);
       overflow: auto;
-      padding-right: 6px;
+      padding-right: 4px;
     }
     .doc-item {
-      padding: 14px;
-      border-radius: 18px;
+      border-radius: 22px;
       border: 1px solid var(--line);
-      background: rgba(255,255,255,0.65);
+      background: rgba(255,255,255,0.64);
+      padding: 14px 15px;
       cursor: pointer;
-      transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+      transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
     }
-    .doc-item:hover, .doc-item.active {
+    .doc-item:hover,
+    .doc-item.active {
       transform: translateY(-1px);
-      border-color: rgba(22, 58, 44, 0.28);
-      background: var(--accent-soft);
+      background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(227,239,233,0.82));
+      border-color: var(--line-strong);
     }
     .doc-item h3 {
-      margin: 0 0 6px;
-      font-size: 0.98rem;
-      line-height: 1.3;
+      margin: 0 0 7px;
+      font-size: 1rem;
+      line-height: 1.22;
+      letter-spacing: -0.02em;
     }
     .doc-meta {
-      color: var(--muted);
-      font-size: 0.82rem;
       display: flex;
-      gap: 8px;
       flex-wrap: wrap;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 0.79rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
-    .editor {
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 5px 9px;
+      border-radius: 999px;
+      background: rgba(23,55,45,0.08);
+      color: var(--accent);
+      font-size: 0.72rem;
+      letter-spacing: 0.02em;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      margin: 7px 6px 0 0;
+    }
+    .studio {
+      display: grid;
+      gap: 18px;
+    }
+    .form-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    .card-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 18px;
+      gap: 14px;
     }
-    .stack {
-      display: flex;
-      flex-direction: column;
-      gap: 18px;
+    .mini-card {
+      border-radius: 24px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.58);
+      padding: 16px;
+    }
+    .mini-card h3 {
+      margin: 0 0 6px;
+      font-size: 1.18rem;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+    }
+    .mini-card p {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
     form {
-      display: flex;
-      flex-direction: column;
+      display: grid;
       gap: 10px;
     }
     label {
-      font-size: 0.84rem;
       color: var(--muted);
+      font-size: 0.8rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
     input, textarea {
       width: 100%;
@@ -502,60 +679,64 @@ def render_knowledge_center_html() -> str:
       border-radius: 16px;
       background: rgba(255,255,255,0.88);
       padding: 12px 14px;
-      font: inherit;
       color: var(--ink);
     }
     textarea {
-      min-height: 180px;
       resize: vertical;
-      line-height: 1.5;
+      min-height: 148px;
+      line-height: 1.55;
+      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
     }
-    .preview {
-      min-height: 540px;
-      padding: 22px;
-      border-radius: 24px;
-      border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(249,246,240,0.92));
-      overflow: auto;
-      white-space: pre-wrap;
-      line-height: 1.65;
-    }
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-    button {
-      appearance: none;
-      border: 0;
-      border-radius: 999px;
-      padding: 11px 16px;
-      font: inherit;
-      cursor: pointer;
-      background: var(--accent);
-      color: #f6f4ee;
-    }
-    button.secondary {
-      background: rgba(255,255,255,0.9);
-      color: var(--ink);
-      border: 1px solid var(--line);
+    .hint {
+      color: var(--muted);
+      font-size: 0.78rem;
+      line-height: 1.45;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
     .status {
-      font-size: 0.9rem;
+      min-height: 1.3rem;
       color: var(--muted);
-      min-height: 1.4rem;
+      font-size: 0.92rem;
+      font-family: ui-sans-serif, system-ui, sans-serif;
     }
     .status.error { color: var(--danger); }
-    .pill {
-      display: inline-flex;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: rgba(22,58,44,0.09);
-      color: var(--accent);
-      font-size: 0.75rem;
-      margin-right: 6px;
+    .preview-card {
+      background: var(--panel-strong);
+    }
+    .preview-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .preview-title {
+      margin: 0;
+      font-size: 2rem;
+      line-height: 0.95;
+      letter-spacing: -0.05em;
+    }
+    .preview-source {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    .preview {
+      margin-top: 18px;
+      min-height: calc(100vh - 360px);
+      border-radius: 26px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.9), rgba(249,244,236,0.96));
+      padding: 24px;
+      overflow: auto;
+      white-space: pre-wrap;
+      line-height: 1.72;
+      font-size: 1.02rem;
     }
     .login-shell {
       min-height: 100vh;
@@ -564,18 +745,59 @@ def render_knowledge_center_html() -> str:
       padding: 24px;
     }
     .login-card {
-      width: min(440px, 100%);
-      padding: 28px;
-      border-radius: 28px;
-      background: rgba(255,253,248,0.86);
-      border: 1px solid var(--line);
+      width: min(520px, 100%);
+      padding: 30px;
+      border-radius: 34px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,250,243,0.76));
+      border: 1px solid rgba(255,255,255,0.72);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
+      backdrop-filter: blur(16px);
     }
-    @media (max-width: 960px) {
-      .grid, .editor { grid-template-columns: 1fr; }
-      .doc-list { max-height: none; }
-      .preview { min-height: 320px; }
+    .login-card h1 {
+      margin: 14px 0 10px;
+      font-size: 3rem;
+      line-height: 0.92;
+      letter-spacing: -0.06em;
+    }
+    .login-card p {
+      margin: 0 0 18px;
+      color: var(--muted);
+      line-height: 1.6;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    @media (max-width: 1120px) {
+      .workspace {
+        grid-template-columns: 1fr;
+      }
+      .doc-list, .preview {
+        max-height: none;
+        min-height: 320px;
+      }
+      .preview {
+        min-height: 360px;
+      }
+    }
+    @media (max-width: 860px) {
+      .shell {
+        width: min(100vw - 18px, 100%);
+      }
+      .hero {
+        grid-template-columns: 1fr;
+      }
+      .hero-stats,
+      .card-grid {
+        grid-template-columns: 1fr;
+      }
+      .hero-card, .hero-side, .panel {
+        border-radius: 24px;
+      }
+      .preview-title {
+        font-size: 1.6rem;
+      }
+      .preview {
+        padding: 18px;
+        font-size: 0.98rem;
+      }
     }
   </style>
 </head>
@@ -585,7 +807,9 @@ def render_knowledge_center_html() -> str:
     const state = {
       docs: [],
       selectedSlug: null,
+      activeDoc: null,
       isAuthed: false,
+      filter: "",
     };
 
     function escapeHtml(value) {
@@ -594,6 +818,12 @@ def render_knowledge_center_html() -> str:
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;");
+    }
+
+    function formatDate(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
     }
 
     function setStatus(message, isError = false) {
@@ -614,6 +844,7 @@ def render_knowledge_center_html() -> str:
       });
       if (response.status === 401) {
         state.isAuthed = false;
+        state.activeDoc = null;
         render();
         throw new Error("Unauthorized");
       }
@@ -626,17 +857,30 @@ def render_knowledge_center_html() -> str:
       return body;
     }
 
+    function filteredDocs() {
+      const query = state.filter.trim().toLowerCase();
+      if (!query) return state.docs;
+      return state.docs.filter((doc) => {
+        const haystack = [
+          doc.title,
+          doc.source_type,
+          ...(doc.tags || []),
+        ].join(" ").toLowerCase();
+        return haystack.includes(query);
+      });
+    }
+
     function renderLogin() {
       document.getElementById("app").innerHTML = `
         <div class="login-shell">
           <div class="login-card">
-            <div class="badge">Protected workspace</div>
-            <h1 style="margin:14px 0 8px;font-size:2.2rem;line-height:0.96;letter-spacing:-0.04em;">Knowledge Center</h1>
-            <p style="margin:0 0 18px;color:var(--muted);line-height:1.6;">Drop in markdown, ingest page URLs, and keep the agent's reference material current from one small workspace.</p>
+            <div class="eyebrow">Private workspace</div>
+            <h1>Knowledge<br>Center</h1>
+            <p>One place for markdown notes, imported reference pages, and grounded material your DM agent can actually search.</p>
             <form id="login-form">
               <label>Password</label>
               <input type="password" name="password" autocomplete="current-password" required>
-              <button type="submit">Enter</button>
+              <button type="submit">Enter workspace</button>
               <div class="status" data-status></div>
             </form>
           </div>
@@ -659,84 +903,129 @@ def render_knowledge_center_html() -> str:
     }
 
     function renderApp() {
-      const docCards = state.docs.map((doc) => `
+      const docs = filteredDocs();
+      const activeDoc = state.activeDoc;
+      const coreCount = state.docs.filter((doc) => doc.source_type === "core").length;
+      const importedCount = state.docs.filter((doc) => doc.source_type !== "core").length;
+      const docCards = docs.map((doc) => `
         <div class="doc-item ${state.selectedSlug === doc.slug ? "active" : ""}" data-slug="${escapeHtml(doc.slug)}">
           <h3>${escapeHtml(doc.title)}</h3>
           <div class="doc-meta">
             <span>${escapeHtml(doc.source_type)}</span>
-            <span>${new Date(doc.updated_at).toLocaleString()}</span>
+            <span>${escapeHtml(formatDate(doc.updated_at))}</span>
           </div>
-          <div style="margin-top:8px;">${(doc.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}</div>
+          <div>${(doc.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}</div>
         </div>`).join("");
 
       document.getElementById("app").innerHTML = `
         <div class="shell">
-          <div class="hero">
-            <div>
-              <div class="badge">Private knowledge workspace</div>
-              <h1>Knowledge<br>Center</h1>
-              <p>Manage team markdown, ingest URLs into readable markdown snapshots, and keep the DM agent grounded in the right material.</p>
-            </div>
-            <div class="toolbar">
-              <button class="secondary" id="refresh-btn">Refresh</button>
-              <button class="secondary" id="logout-btn">Log out</button>
-            </div>
-          </div>
-          <div class="grid">
-            <div class="panel">
-              <div class="panel-inner">
-                <p class="section-title">Documents</p>
-                <div class="doc-list">${docCards || '<div class="doc-item"><h3>No documents yet</h3><div class="doc-meta">Add markdown or ingest a page URL.</div></div>'}</div>
+          <section class="hero">
+            <div class="hero-card">
+              <div class="eyebrow">Knowledge workspace</div>
+              <h1>Library,<br>Studio,<br>Preview.</h1>
+              <p>Keep your agent grounded with built-in notes, fresh markdown, and extracted page snapshots. The workspace is private, touch-friendly, and fast enough to use from your phone without feeling like admin software.</p>
+              <div class="hero-stats">
+                <div class="stat"><strong>${state.docs.length}</strong><span>Total docs</span></div>
+                <div class="stat"><strong>${coreCount}</strong><span>Built-in</span></div>
+                <div class="stat"><strong>${importedCount}</strong><span>Imported</span></div>
               </div>
             </div>
-            <div class="stack">
+            <aside class="hero-side">
+              <div>
+                <h2>Import from notes or locked pages.</h2>
+                <p>Paste markdown directly, or ingest a page URL with optional cookies or bearer auth when your team needs material from protected systems.</p>
+              </div>
+              <div class="toolbar">
+                <button class="ghost" id="refresh-btn">Refresh</button>
+                <button class="ghost" id="logout-btn">Log out</button>
+              </div>
+            </aside>
+          </section>
+
+          <section class="workspace">
+            <div class="panel">
+              <div class="panel-header">
+                <p class="panel-title">Library</p>
+              </div>
+              <div class="panel-body">
+                <input class="search" id="doc-search" placeholder="Filter by title, type, or tag" value="${escapeHtml(state.filter)}">
+                <div class="doc-list">${docCards || '<div class="doc-item"><h3>No matching documents</h3><div class="doc-meta">Adjust the filter or add a new source.</div></div>'}</div>
+              </div>
+            </div>
+
+            <div class="studio">
               <div class="panel">
-                <div class="panel-inner">
-                  <p class="section-title">Add Sources</p>
-                  <div class="editor">
-                    <form id="markdown-form">
-                      <label>Title</label>
-                      <input name="title" placeholder="Collectives FAQ">
-                      <label>Tags</label>
-                      <input name="tags" placeholder="collectives, faq, sales">
-                      <label>Markdown</label>
-                      <textarea name="content" placeholder="# Notes&#10;&#10;Paste markdown here."></textarea>
-                      <button type="submit">Save markdown</button>
-                    </form>
-                    <form id="url-form">
-                      <label>Page URL</label>
-                      <input name="url" placeholder="https://example.com/private-page" required>
-                      <label>Title override</label>
-                      <input name="title" placeholder="Optional">
-                      <label>Tags</label>
-                      <input name="tags" placeholder="url, source">
-                      <label>Cookie header</label>
-                      <textarea name="cookie_header" placeholder="Optional. Example: sessionid=..."></textarea>
-                      <label>Authorization header</label>
-                      <textarea name="auth_header" placeholder="Optional. Example: Bearer ..."></textarea>
-                      <button type="submit">Ingest URL</button>
-                    </form>
+                <div class="panel-header">
+                  <p class="panel-title">Studio</p>
+                </div>
+                <div class="panel-body">
+                  <div class="card-grid">
+                    <div class="mini-card">
+                      <h3>Markdown drop</h3>
+                      <p>Useful for FAQs, internal notes, objections, and draft positioning material.</p>
+                      <form id="markdown-form">
+                        <label>Title</label>
+                        <input name="title" placeholder="Collectives FAQ">
+                        <label>Tags</label>
+                        <input name="tags" placeholder="collectives, faq, sales">
+                        <label>Markdown</label>
+                        <textarea name="content" placeholder="# Notes&#10;&#10;Paste markdown here."></textarea>
+                        <button type="submit">Save markdown</button>
+                      </form>
+                    </div>
+                    <div class="mini-card">
+                      <h3>URL ingest</h3>
+                      <p>Fetch a page once, extract readable markdown, and keep a stable snapshot for retrieval.</p>
+                      <form id="url-form">
+                        <label>Page URL</label>
+                        <input name="url" placeholder="https://example.com/private-page" required>
+                        <label>Title override</label>
+                        <input name="title" placeholder="Optional">
+                        <label>Tags</label>
+                        <input name="tags" placeholder="url, source">
+                        <label>Cookie header</label>
+                        <textarea name="cookie_header" placeholder="Optional. Example: sessionid=..."></textarea>
+                        <label>Authorization header</label>
+                        <textarea name="auth_header" placeholder="Optional. Example: Bearer ..."></textarea>
+                        <button type="submit">Ingest URL</button>
+                      </form>
+                    </div>
                   </div>
+                  <div class="hint" style="margin-top:14px;">Imported pages are stored as markdown snapshots. The agent searches these alongside the built-in knowledge files.</div>
                   <div class="status" data-status></div>
                 </div>
               </div>
-              <div class="panel">
-                <div class="panel-inner">
-                  <p class="section-title">Preview</p>
-                  <div class="preview" id="preview">Select a document to preview its markdown.</div>
+            </div>
+
+            <div class="panel preview-card">
+              <div class="panel-header">
+                <p class="panel-title">Preview</p>
+              </div>
+              <div class="panel-body">
+                <h2 class="preview-title">${escapeHtml(activeDoc && activeDoc.title ? activeDoc.title : "Select a document")}</h2>
+                <div class="preview-meta">
+                  ${activeDoc ? `<span>${escapeHtml(activeDoc.source_type || "")}</span>` : ""}
+                  ${activeDoc ? `<span>${escapeHtml(formatDate(activeDoc.updated_at || ""))}</span>` : ""}
+                  ${activeDoc && activeDoc.tags ? activeDoc.tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("") : ""}
                 </div>
+                ${activeDoc && activeDoc.source_url ? `<div class="preview-source">Source: ${escapeHtml(activeDoc.source_url)}</div>` : ""}
+                <div class="preview" id="preview">${escapeHtml(activeDoc && activeDoc.content ? activeDoc.content : "Pick a document from the library to preview its markdown here.")}</div>
               </div>
             </div>
-          </div>
+          </section>
         </div>`;
 
       document.querySelectorAll("[data-slug]").forEach((node) => {
         node.addEventListener("click", () => loadDoc(node.getAttribute("data-slug")));
       });
-      document.getElementById("refresh-btn").addEventListener("click", loadDocs);
+      document.getElementById("refresh-btn").addEventListener("click", () => loadDocs(state.selectedSlug));
       document.getElementById("logout-btn").addEventListener("click", logout);
       document.getElementById("markdown-form").addEventListener("submit", submitMarkdown);
       document.getElementById("url-form").addEventListener("submit", submitUrl);
+      document.getElementById("doc-search").addEventListener("input", (event) => {
+        state.filter = event.target.value || "";
+        renderApp();
+      });
     }
 
     async function submitMarkdown(event) {
@@ -777,9 +1066,8 @@ def render_knowledge_center_html() -> str:
       try {
         const doc = await api(`/knowledge-center/api/documents/${slug}`);
         state.selectedSlug = slug;
-        document.getElementById("preview").textContent = doc.content || "No content";
+        state.activeDoc = doc;
         renderApp();
-        document.getElementById("preview").textContent = doc.content || "No content";
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -791,10 +1079,16 @@ def render_knowledge_center_html() -> str:
         state.docs = docs;
         state.selectedSlug = selectSlug || state.selectedSlug || (docs[0] && docs[0].slug) || null;
         state.isAuthed = true;
-        render();
         if (state.selectedSlug) {
-          await loadDoc(state.selectedSlug);
+          try {
+            state.activeDoc = await api(`/knowledge-center/api/documents/${state.selectedSlug}`);
+          } catch (error) {
+            state.activeDoc = null;
+          }
+        } else {
+          state.activeDoc = null;
         }
+        render();
       } catch (error) {
         setStatus(error.message, true);
       }
@@ -803,6 +1097,7 @@ def render_knowledge_center_html() -> str:
     async function logout() {
       await api("/knowledge-center/logout", { method: "POST" });
       state.isAuthed = false;
+      state.activeDoc = null;
       render();
     }
 
