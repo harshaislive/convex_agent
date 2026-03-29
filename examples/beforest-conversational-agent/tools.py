@@ -311,7 +311,16 @@ def browse_beforest_page(url: str, query: str = "") -> dict[str, str | list[str]
     Returns:
         Page title, URL, focused snippet, and a small list of discovered links.
     """
-    page = _fetch_beforest_page(url)
+    try:
+        page = _fetch_beforest_page(url)
+    except (ValueError, RuntimeError) as exc:
+        # Bad or unreachable URLs should not fail the whole agent run.
+        return {
+            "url": url,
+            "title": "Unavailable page",
+            "snippet": str(exc),
+            "links": [],
+        }
     text = str(page["text"])
     links = page["links"]
     snippet_query = query or text[:80]
