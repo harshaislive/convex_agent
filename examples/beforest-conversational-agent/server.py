@@ -28,7 +28,6 @@ class ReplyResponse(BaseModel):
     ok: bool
     reply: str
     thread_id: str
-    suggested_replies: list[str] = Field(default_factory=list)
 
 
 @app.get("/health")
@@ -61,7 +60,4 @@ def reply(request: ReplyRequest) -> ReplyResponse | JSONResponse:
         ok=True,
         reply=str(result["reply"]),
         thread_id=str(result["thread_id"] or resolved_thread_id),
-        suggested_replies=[
-            str(item) for item in result.get("suggested_replies", []) if item
-        ],
     )

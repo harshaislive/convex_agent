@@ -37,10 +37,7 @@ EXAMPLE_DIR = Path(__file__).parent.resolve()
 BOT_LABEL = "Beforest"
 console = Console()
 URL_PATTERN = re.compile(r"https://[^\s)]+")
-MAIN_SITE_URL = "https://beforest.co"
-EXPERIENCES_URL = "https://experiences.beforest.co"
 BUTTON_LIMIT = 3
-SUGGESTED_REPLY_LIMIT = 3
 
 
 def _sanitize_message_content(message: BaseMessage) -> BaseMessage:
@@ -135,39 +132,6 @@ def _resolve_manychat_subscriber_id(
     return None
 
 
-def _infer_suggested_replies(question: str, reply_text: str) -> list[str]:
-    """Infer a short list of suggested next replies for DM navigation."""
-    combined = f"{question}\n{reply_text}".lower()
-    suggestions: list[str] = []
-
-    def add(option: str) -> None:
-        if option not in suggestions:
-            suggestions.append(option)
-
-    if any(term in combined for term in ("collective", "community", "join", "member")):
-        add("Explore collectives")
-    if any(term in combined for term in ("experience", "retreat", "event", "activity")):
-        add("See experiences")
-    if any(term in combined for term in ("stay", "room", "hospitality", "bungalow")):
-        add("Explore stays")
-    if any(term in combined for term in ("10%", "ten percent", "lifestyle", "belonging")):
-        add("Understand 10%")
-    if any(term in combined for term in ("product", "coffee", "bewild", "shop", "order")):
-        add("See products")
-
-    add("Talk to team")
-    add("Start here")
-    return suggestions[:SUGGESTED_REPLY_LIMIT]
-
-
-def _append_suggested_replies(reply_text: str, suggestions: list[str]) -> str:
-    """Append lightweight next-step prompts to the DM text."""
-    if not suggestions:
-        return reply_text
-    prompt = "You can reply with: " + " | ".join(suggestions)
-    return f"{reply_text}\n\n{prompt}"
-
-
 def _normalize_manychat_text(reply_text: str) -> str:
     """Convert model output into cleaner DM-friendly text."""
     text = reply_text.replace("\r\n", "\n").strip()
@@ -208,33 +172,6 @@ def _button_caption_for_url(url: str) -> str:
     return "Open Link"
 
 
-def _suggest_canonical_urls(question: str, reply_text: str) -> list[str]:
-    """Add stable Beforest destinations when the model omits a useful link."""
-    combined = f"{question}\n{reply_text}".lower()
-    urls: list[str] = []
-
-    if any(term in combined for term in ("experience", "retreat", "stay", "visit")):
-        urls.append(EXPERIENCES_URL)
-
-    if any(
-        term in combined
-        for term in ("collective", "community", "join", "membership", "beforest")
-    ):
-        urls.append(MAIN_SITE_URL)
-
-    if not urls:
-        urls.append(MAIN_SITE_URL)
-
-    deduped_urls: list[str] = []
-    seen: set[str] = set()
-    for url in urls:
-        if url in seen:
-            continue
-        seen.add(url)
-        deduped_urls.append(url)
-    return deduped_urls
-
-
 def _build_manychat_buttons(urls: list[str]) -> list[dict[str, str]]:
     """Create a small set of URL buttons for Instagram DM replies."""
     buttons: list[dict[str, str]] = []
@@ -252,16 +189,13 @@ def _build_manychat_buttons(urls: list[str]) -> list[dict[str, str]]:
 def _build_manychat_messages(question: str, reply_text: str) -> list[dict[str, Any]]:
     """Compose a DM-friendly message list with concise text and useful buttons."""
     normalized_text = _normalize_manychat_text(reply_text)
-    suggestions = _infer_suggested_replies(question, normalized_text)
-    display_text = _append_suggested_replies(normalized_text, suggestions)
     discovered_urls = _extract_urls(normalized_text)
-    urls = discovered_urls or _suggest_canonical_urls(question, normalized_text)
 
     message: dict[str, Any] = {
         "type": "text",
-        "text": display_text,
+        "text": normalized_text,
     }
-    buttons = _build_manychat_buttons(urls)
+    buttons = _build_manychat_buttons(discovered_urls)
     if buttons:
         message["buttons"] = buttons
 
@@ -627,8 +561,6 @@ def generate_reply_bundle(
     )
     final_message = result["messages"][-1]
     answer = str(getattr(final_message, "content", str(final_message)))
-    suggested_replies = _infer_suggested_replies(question, answer)
-
     if push_to_manychat and resolved_manychat_subscriber_id:
         _push_manychat_reply(resolved_manychat_subscriber_id, answer, question)
     _save_event_to_convex(
@@ -642,7 +574,6 @@ def generate_reply_bundle(
     return {
         "reply": answer,
         "thread_id": resolved_thread_id,
-        "suggested_replies": suggested_replies,
     }
 
 
