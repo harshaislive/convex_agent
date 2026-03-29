@@ -14,6 +14,7 @@ from langchain_core.tools import tool
 
 EXAMPLE_DIR = Path(__file__).parent.resolve()
 KNOWLEDGE_DIR = EXAMPLE_DIR / "knowledge"
+KNOWLEDGE_CENTER_DOCS_DIR = EXAMPLE_DIR / "knowledge_center" / "docs"
 DATA_DIR = EXAMPLE_DIR / "data"
 LEADS_PATH = DATA_DIR / "leads.jsonl"
 ESCALATIONS_PATH = DATA_DIR / "escalations.jsonl"
@@ -270,7 +271,7 @@ def search_beforest_knowledge(query: str, max_results: int = 3) -> list[dict[str
     """
     results: list[dict[str, str | int]] = []
 
-    for path in KNOWLEDGE_DIR.glob("*.md"):
+    for path in list(KNOWLEDGE_DIR.glob("*.md")) + list(KNOWLEDGE_CENTER_DOCS_DIR.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         score = _score_text(query, text)
         if score <= 0:

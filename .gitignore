@@ -3,4 +3,8 @@ node_modules/
 examples/beforest-conversational-agent/.venv/
 examples/beforest-conversational-agent/__pycache__/
 examples/beforest-conversational-agent/.env
+examples/beforest-conversational-agent/knowledge_center/docs/
+examples/beforest-conversational-agent/knowledge_center/index.json
 convex/_generated/
+
+.env.local

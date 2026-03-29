@@ -23,3 +23,18 @@ Required environment variables:
 - `CONVEX_HTTP_ACTION_URL`
 - `AGENT_SHARED_SECRET`
 - `BEFOREST_HTTP_TIMEOUT_SECONDS`
+- `KNOWLEDGE_CENTER_PASSWORD`
+
+## Knowledge Center
+
+The app now includes a private knowledge workspace at `/knowledge-center`.
+
+Use it to:
+- paste team-maintained Markdown
+- ingest page URLs into Markdown snapshots
+- optionally fetch protected pages with a cookie header or authorization header
+
+Notes:
+- uploaded knowledge is stored under `examples/beforest-conversational-agent/knowledge_center/`
+- ingested docs are included in `search_beforest_knowledge`, so the DM agent can use them in replies
+- set `KNOWLEDGE_CENTER_PASSWORD` before using the UI
