@@ -342,7 +342,7 @@ def save_entry(
     normalized_body = body.strip()
     if not normalized_body:
         raise ValueError("Body is required.")
-    payload = {
+    payload: dict[str, Any] = {
         "slug": (slug or "").strip() or _slugify(normalized_title),
         "title": normalized_title,
         "type": entry_type.strip() or "fact",
@@ -353,9 +353,11 @@ def save_entry(
         "audienceTags": _normalize_tags(audience_tags),
         "priority": float(priority),
         "status": status.strip() or "draft",
-        "sourceType": source_type.strip() if source_type else None,
-        "sourceUrl": source_url.strip() if source_url else None,
     }
+    if source_type and source_type.strip():
+        payload["sourceType"] = source_type.strip()
+    if source_url and source_url.strip():
+        payload["sourceUrl"] = source_url.strip()
     result = _convex_request("/knowledge/upsert-entry", method="POST", payload=payload)
     if not isinstance(result, dict) or result.get("ok") is not True:
         raise RuntimeError("Convex did not confirm the save.")
@@ -417,45 +419,47 @@ def render_knowledge_center_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knowledge Center</title>
   <style>
-  :root { --bg:#fff; --ink:#000; --muted:#686868; --line:#d7d7d7; --soft:#f3f3f3; --radius:16px; }
+  :root { --bg:#fff; --ink:#000; --muted:#6a6a6a; --line:#dbdbdb; --soft:#f7f7f7; --radius:20px; }
   * { box-sizing:border-box; }
-  body { margin:0; background:#fff; color:#000; font-family:"Times New Roman", Times, serif; }
+  body { margin:0; background:#fff; color:#000; font-family:Arial, Helvetica, sans-serif; }
   button, input, select, textarea { font:inherit; color:inherit; }
-  button { cursor:pointer; border:1px solid #000; border-radius:999px; background:#000; color:#fff; padding:10px 16px; }
+  button { cursor:pointer; border:1px solid #000; border-radius:999px; background:#000; color:#fff; padding:10px 16px; transition:transform 120ms ease, opacity 120ms ease; }
+  button:hover { transform:translateY(-1px); }
   button.secondary { background:#fff; color:#000; }
   button.ghost { background:transparent; color:#000; border-radius:12px; }
-  input, select, textarea { width:100%; border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:#fff; }
+  input, select, textarea { width:100%; border:1px solid var(--line); border-radius:14px; padding:12px 14px; background:#fff; }
+  input:focus, select:focus, textarea:focus { outline:none; border-color:#000; }
   textarea { resize:vertical; min-height:140px; line-height:1.5; }
-  .page { width:min(1460px, calc(100vw - 20px)); margin:0 auto; padding:16px 0 28px; }
-  .topbar { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; padding:6px 0 20px; border-bottom:1px solid #000; margin-bottom:18px; }
-  .title-block h1 { margin:0; font-size:clamp(2.4rem, 5vw, 4.8rem); line-height:.92; letter-spacing:-.06em; font-weight:400; }
-  .title-block p { margin:8px 0 0; color:var(--muted); max-width:720px; }
+  .page { width:min(1480px, calc(100vw - 28px)); margin:0 auto; padding:20px 0 32px; }
+  .topbar { display:flex; justify-content:space-between; gap:24px; align-items:flex-end; padding:8px 0 24px; border-bottom:1px solid #000; margin-bottom:22px; }
+  .title-block h1 { margin:0; font-family:Georgia, "Times New Roman", serif; font-size:clamp(2.7rem, 6vw, 5.4rem); line-height:.9; letter-spacing:-.07em; font-weight:400; }
+  .title-block p { margin:10px 0 0; color:var(--muted); max-width:760px; font-size:1rem; line-height:1.55; }
   .mini { font-size:.76rem; text-transform:uppercase; letter-spacing:.16em; font-family:Arial, Helvetica, sans-serif; color:var(--muted); }
   .top-actions { display:flex; gap:10px; flex-wrap:wrap; }
-  .workspace { display:grid; grid-template-columns:310px minmax(0, 1.2fr) minmax(270px, .85fr); gap:16px; }
-  .panel { border:1px solid #000; border-radius:var(--radius); min-height:0; }
-  .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .workspace { display:grid; grid-template-columns:320px minmax(0, 1.1fr) minmax(300px, .9fr); gap:18px; }
+  .panel { border:1px solid #000; border-radius:var(--radius); min-height:0; background:#fff; overflow:hidden; }
+  .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:16px 18px; border-bottom:1px solid var(--line); background:var(--soft); }
   .panel-head h2 { margin:0; font:700 .8rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
-  .panel-body { padding:16px; }
-  .stack { display:grid; gap:12px; }
+  .panel-body { padding:18px; }
+  .stack { display:grid; gap:14px; }
   .field { display:grid; gap:7px; }
   .field label { font:.72rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
-  .form-grid { display:flex; gap:10px; flex-wrap:wrap; }
+  .form-grid { display:flex; gap:12px; flex-wrap:wrap; }
   .form-grid > * { flex:1 1 170px; }
-  .entry-list { display:grid; gap:8px; max-height:calc(100vh - 280px); overflow:auto; }
-  .entry-card { width:100%; text-align:left; border:1px solid var(--line); border-radius:14px; padding:12px; background:#fff; color:#000; }
+  .entry-list { display:grid; gap:10px; max-height:calc(100vh - 300px); overflow:auto; padding-right:4px; }
+  .entry-card { width:100%; text-align:left; border:1px solid var(--line); border-radius:16px; padding:14px; background:#fff; color:#000; }
   .entry-card.active { border-color:#000; background:var(--soft); }
-  .entry-card h3 { margin:0 0 6px; font-size:1rem; font-weight:400; }
-  .entry-card p { margin:0; color:var(--muted); font-size:.85rem; }
+  .entry-card h3 { margin:0 0 6px; font-family:Georgia, "Times New Roman", serif; font-size:1.06rem; font-weight:400; }
+  .entry-card p { margin:0; color:var(--muted); font-size:.87rem; line-height:1.45; }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
   .pill { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font:.68rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.08em; }
-  .textarea-body { min-height:48vh; }
-  .preview-block { border:1px solid var(--line); border-radius:14px; padding:14px; background:var(--soft); }
+  .textarea-body { min-height:50vh; font-family:Georgia, "Times New Roman", serif; font-size:.98rem; }
+  .preview-block { border:1px solid var(--line); border-radius:16px; padding:15px; background:var(--soft); }
   .preview-block h3 { margin:0 0 10px; font:700 .78rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
   .preview-body { white-space:pre-wrap; line-height:1.58; max-height:40vh; overflow:auto; font-size:.94rem; }
   .login-wrap { min-height:100vh; display:grid; place-items:center; padding:18px; }
-  .login-card { width:min(430px, 100%); border:1px solid #000; border-radius:20px; padding:28px; }
-  .login-card h1 { margin:0 0 10px; font-size:clamp(2.8rem, 9vw, 4.4rem); line-height:.9; letter-spacing:-.07em; font-weight:400; }
+  .login-card { width:min(460px, 100%); border:1px solid #000; border-radius:24px; padding:32px; }
+  .login-card h1 { margin:0 0 12px; font-family:Georgia, "Times New Roman", serif; font-size:clamp(3rem, 10vw, 4.8rem); line-height:.9; letter-spacing:-.08em; font-weight:400; }
   .login-card p, .status, .empty { color:var(--muted); }
   .status { min-height:1.2rem; font:.84rem/1.4 Arial, Helvetica, sans-serif; }
   .status.error { color:#000; font-weight:700; }

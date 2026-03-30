@@ -4,6 +4,12 @@ import { api } from "./_generated/api";
 
 const http = httpRouter();
 
+function omitNullishFields(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, fieldValue]) => fieldValue !== null && fieldValue !== undefined),
+  );
+}
+
 http.route({
   path: "/instagram/store-dm-event",
   method: "POST",
@@ -149,7 +155,7 @@ http.route({
     }
 
     const body = await req.json();
-    const result = await ctx.runMutation(api.knowledge.upsertEntry, body);
+    const result = await ctx.runMutation(api.knowledge.upsertEntry, omitNullishFields(body as Record<string, unknown>));
     return Response.json({ ok: true, ...result });
   }),
 });
