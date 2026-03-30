@@ -5,7 +5,7 @@ A starter conversational agent for `Beforest.co` built on LangChain's `deepagent
 This example is designed for a practical Beforest use case instead of a generic demo:
 
 - answer common visitor questions about Beforest and its collectives
-- stay grounded in a Convex-backed knowledge base with local fallback
+- stay grounded in Outline as the knowledge source of truth
 - guide people to the right Beforest destination link when they want to act
 
 The bundled knowledge files are based on a snapshot of `https://beforest.co` reviewed on March 27, 2026. Subscription status, availability, pricing, and operating details can change, so the agent is instructed to guide people to the appropriate Beforest destination instead of guessing.
@@ -18,6 +18,19 @@ cp .env.example .env
 ```
 
 Add your API settings to `.env`.
+
+For knowledge retrieval from Outline, set:
+
+```bash
+OUTLINE_API_URL=https://beforestrepo.devsharsha.live
+OUTLINE_API_TOKEN=your_outline_api_token
+```
+
+If you want to limit retrieval to a single collection, also set:
+
+```bash
+OUTLINE_COLLECTION_ID=your_collection_uuid
+```
 
 For your Azure AI Foundry deployment, use:
 
@@ -107,24 +120,6 @@ AGENT_SHARED_SECRET=replace_with_a_shared_secret
 
 This service will POST directly to the Convex HTTP action we just deployed and store records in `instagramConversations`.
 
-The same Convex deployment now also exposes protected knowledge routes:
-
-- `GET /knowledge/search`
-- `GET /knowledge/entries`
-- `POST /knowledge/upsert-entry`
-
-The Python retrieval tool uses these automatically when `CONVEX_HTTP_ACTION_URL` and `AGENT_SHARED_SECRET` are set.
-
-To seed the existing markdown knowledge into Convex:
-
-```bash
-uv run python sync_knowledge_to_convex.py
-```
-
-Run that from `examples/beforest-conversational-agent/` after deploying the updated Convex schema and functions.
-
-The knowledge UI is intended to move to a separate frontend app connected directly to Convex. This Python service remains focused on the agent/runtime API.
-
 ## What This Example Includes
 
 ```text
@@ -148,9 +143,9 @@ beforest-conversational-agent/
 The example uses three layers:
 
 1. `AGENTS.md` defines the agent persona, guardrails, and routing rules.
-2. `knowledge/` stores local fallback files and seed content.
+2. Outline stores the approved knowledge that `search_beforest_knowledge` retrieves.
 3. `tools.py` adds:
-   - `search_beforest_knowledge` for Convex-first retrieval with metadata-aware ranking
+   - `search_beforest_knowledge` for Outline-backed retrieval
    - `search_beforest_experiences` for live lookups against `experiences.beforest.co`
    - `browse_beforest_page` for fetching a specific `beforest.co` or Beforest subdomain page on demand
 
@@ -167,7 +162,7 @@ This example uses `FilesystemBackend` for local development. For a real web app,
 
 ## Suggested Next Steps For Beforest
 
-- replace the static knowledge files with content pulled from the website CMS
+- expand the Outline knowledge structure into multiple collections or documents by topic
 - add multilingual support if your visitors ask in multiple Indian languages
 - mount the agent behind a website chat widget or WhatsApp handoff flow
 

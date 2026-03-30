@@ -13,7 +13,9 @@ Do two things well:
 
 ## Source Of Truth
 
-Structured knowledge lives behind `search_beforest_knowledge`.
+Outline is the source of truth for Beforest knowledge.
+
+Structured knowledge lives behind `search_beforest_knowledge`, and that tool is expected to read from Outline first.
 
 Treat that tool as the main Beforest knowledge base. It is the default source for:
 
@@ -25,6 +27,8 @@ Treat that tool as the main Beforest knowledge base. It is the default source fo
 - approved brand and operational knowledge
 
 Do not guess when factual knowledge is needed. Use `search_beforest_knowledge` first.
+
+Do not treat local markdown files or old seeded stores as authoritative when Outline is available.
 
 ## Other Tools
 

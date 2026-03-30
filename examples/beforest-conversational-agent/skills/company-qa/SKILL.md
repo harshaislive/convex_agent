@@ -10,9 +10,9 @@ description: Answer questions about Beforest, its collectives, philosophy, hospi
 1. Start with `search_beforest_knowledge` using the user's topic.
 2. If the question is about stays, retreats, hospitality, or experiences, use `search_beforest_experiences`.
 3. If the user asks about a specific Beforest page or shares a Beforest URL, use `browse_beforest_page`.
-4. If the search results are not enough, read the relevant file in `knowledge/`.
+4. Treat Outline-backed search results as the source of truth when Outline is configured.
 5. Answer only from documented information.
-6. If the user asks for a detail that may have changed, explicitly say the local knowledge is a snapshot or that the live site did not confirm it, then guide them to the most relevant link.
+6. If the user asks for a detail that may have changed, say the current knowledge did not confirm it and guide them to the most relevant link.
 
 ## Response Guidelines
 

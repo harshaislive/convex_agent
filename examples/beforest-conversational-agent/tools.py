@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import smtplib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -25,6 +26,7 @@ DEFAULT_HTTP_TIMEOUT_SECONDS = 3.0
 EXPERIENCE_CACHE_TTL_SECONDS = 300
 _EXPERIENCE_CACHE: dict[str, object] = {"pages": [], "fetched_at": 0.0}
 _EXPERIENCE_PAGE_CACHE: dict[str, object] = {}
+_OUTLINE_TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _score_text(query: str, text: str) -> int:
@@ -36,6 +38,91 @@ def _score_text(query: str, text: str) -> int:
 def _normalize_text(text: str) -> str:
     """Collapse repeated whitespace for cleaner snippets."""
     return " ".join(text.split())
+
+
+def _strip_html_tags(text: str) -> str:
+    """Remove simple inline HTML markers returned by Outline search."""
+    return _OUTLINE_TAG_RE.sub("", text)
+
+
+def _get_outline_api_base() -> str | None:
+    """Return the Outline API base URL when configured."""
+    base = os.getenv("OUTLINE_API_URL", "").strip() or os.getenv(
+        "OUTLINE_BASE_URL", ""
+    ).strip()
+    if not base:
+        return None
+    return base.rstrip("/") + "/api"
+
+
+def _load_outline_knowledge_results(
+    query: str,
+    *,
+    max_results: int,
+) -> list[dict[str, str | int]]:
+    """Search Outline documents and return grounded snippets."""
+    api_base = _get_outline_api_base()
+    token = os.getenv("OUTLINE_API_TOKEN", "").strip()
+    if not api_base or not token:
+        return []
+
+    payload = {"query": query, "limit": max_results}
+    collection_id = os.getenv("OUTLINE_COLLECTION_ID", "").strip()
+    if collection_id:
+        payload["collectionId"] = collection_id
+
+    request = Request(
+        f"{api_base}/documents.search",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", errors="replace")
+    except (HTTPError, OSError):
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    items = parsed.get("data", [])
+    if not isinstance(items, list):
+        return []
+
+    results: list[dict[str, str | int]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        document = item.get("document", {})
+        if not isinstance(document, dict):
+            document = {}
+        title = str(document.get("title", "Untitled Outline document"))
+        context = _normalize_text(_strip_html_tags(str(item.get("context", "")).strip()))
+        body = _normalize_text(str(document.get("text", "")).strip())
+        snippet_source = context or body
+        if not snippet_source:
+            continue
+        ranking = item.get("ranking", 0)
+        try:
+            score = int(float(ranking) * 1000)
+        except (TypeError, ValueError):
+            score = 0
+        results.append(
+            {
+                "source": title,
+                "score": score,
+                "snippet": _build_snippet(snippet_source, query),
+            }
+        )
+
+    return results
 
 
 def _get_convex_base() -> str | None:
@@ -334,7 +421,7 @@ def search_beforest_knowledge(
     intent: str = "",
     audience: str = "",
 ) -> list[dict[str, str | int]]:
-    """Search Convex-backed Beforest knowledge, with local fallback.
+    """Search Beforest knowledge with Outline as the primary source of truth.
 
     Args:
         query: Question or topic to search for.
@@ -345,6 +432,16 @@ def search_beforest_knowledge(
     Returns:
         Matching knowledge snippets ordered by relevance.
     """
+    outline_results = _load_outline_knowledge_results(
+        query,
+        max_results=max_results,
+    )
+    if outline_results:
+        return outline_results[:max_results]
+
+    if _get_outline_api_base() and os.getenv("OUTLINE_API_TOKEN", "").strip():
+        return []
+
     convex_results = _load_convex_knowledge_results(
         query,
         max_results=max_results,
