@@ -123,12 +123,7 @@ uv run python sync_knowledge_to_convex.py
 
 Run that from `examples/beforest-conversational-agent/` after deploying the updated Convex schema and functions.
 
-URL import in the knowledge center now uses a two-step fetch path:
-
-1. fast HTTP fetch for simple pages
-2. Playwright Chromium fallback for JS-heavy or bot-protected pages
-
-If you deploy with Docker, rebuild the image so Playwright and Chromium are installed.
+The knowledge UI is intended to move to a separate frontend app connected directly to Convex. This Python service remains focused on the agent/runtime API.
 
 ## What This Example Includes
 
