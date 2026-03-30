@@ -152,6 +152,49 @@ def _fetch_url_content(
     return title, markdown
 
 
+def _fetch_url_content_with_browser(
+    url: str,
+    *,
+    cookie_header: str | None = None,
+    auth_header: str | None = None,
+) -> tuple[str, str]:
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Browser import is unavailable because Playwright is not installed.") from exc
+
+    extra_headers: dict[str, str] = {}
+    if cookie_header:
+        extra_headers["Cookie"] = cookie_header
+    if auth_header:
+        extra_headers["Authorization"] = auth_header
+
+    timeout_ms = int(float(os.getenv("BEFOREST_BROWSER_IMPORT_TIMEOUT_SECONDS", "18")) * 1000)
+
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(extra_http_headers=extra_headers or None)
+            page = context.new_page()
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
+            try:
+                page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8000))
+            except Exception:  # noqa: BLE001
+                pass
+            html = page.content()
+            title = page.title()
+            context.close()
+            browser.close()
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"Browser import failed for {url}: {exc}") from exc
+
+    extracted_title, markdown = _extract_markdown_from_html(html)
+    resolved_title = title.strip() or extracted_title
+    if not markdown:
+        raise RuntimeError("Browser fetched the page but could not extract readable content.")
+    return resolved_title, markdown
+
+
 def _knowledge_password() -> str:
     password = os.getenv("KNOWLEDGE_CENTER_PASSWORD", "").strip()
     if not password:
@@ -393,7 +436,18 @@ def import_url_entry(
     cookie_header: str | None = None,
     auth_header: str | None = None,
 ) -> dict[str, Any]:
-    fetched_title, markdown = _fetch_url_content(url, cookie_header=cookie_header, auth_header=auth_header)
+    try:
+        fetched_title, markdown = _fetch_url_content(
+            url,
+            cookie_header=cookie_header,
+            auth_header=auth_header,
+        )
+    except RuntimeError:
+        fetched_title, markdown = _fetch_url_content_with_browser(
+            url,
+            cookie_header=cookie_header,
+            auth_header=auth_header,
+        )
     chosen_title = (title or fetched_title).strip() or fetched_title
     return save_entry(
         slug=None,
