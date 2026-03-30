@@ -27,10 +27,37 @@ EXPERIENCE_CACHE_TTL_SECONDS = 300
 _EXPERIENCE_CACHE: dict[str, object] = {"pages": [], "fetched_at": 0.0}
 _EXPERIENCE_PAGE_CACHE: dict[str, object] = {}
 _OUTLINE_TAG_RE = re.compile(r"<[^>]+>")
+_COMMON_QUERY_TERMS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "be",
+    "beforest",
+    "by",
+    "for",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "our",
+    "the",
+    "their",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+}
 
 
 def _score_text(query: str, text: str) -> int:
-    terms = [term for term in query.lower().split() if term]
+    terms = _query_terms(query)
     haystack = text.lower()
     return sum(haystack.count(term) for term in terms)
 
@@ -43,6 +70,19 @@ def _normalize_text(text: str) -> str:
 def _strip_html_tags(text: str) -> str:
     """Remove simple inline HTML markers returned by Outline search."""
     return _OUTLINE_TAG_RE.sub("", text)
+
+
+def _query_terms(query: str) -> list[str]:
+    """Return the most meaningful query terms for matching and snippets."""
+    raw_terms = re.findall(r"\b[\w-]+\b", query.lower())
+    filtered = [
+        term
+        for term in raw_terms
+        if len(term) > 2 or term.isdigit()
+        if term not in _COMMON_QUERY_TERMS
+    ]
+    ordered = sorted(dict.fromkeys(filtered), key=lambda term: (-len(term), term))
+    return ordered or [term for term in raw_terms if term]
 
 
 def _knowledge_debug_enabled() -> bool:
@@ -277,7 +317,7 @@ def _build_snippet(text: str, query: str, limit: int = 360) -> str:
         return compact
 
     lower_text = compact.lower()
-    for term in [item for item in query.lower().split() if item]:
+    for term in _query_terms(query):
         index = lower_text.find(term)
         if index >= 0:
             start = max(index - limit // 3, 0)
