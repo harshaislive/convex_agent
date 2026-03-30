@@ -11,8 +11,23 @@ from langchain_core.tools import tool
 from core.settings import settings
 
 EXPERIENCES_BASE_URL = "https://experiences.beforest.co/"
+LIVE_SEARCH_SEEDS = [
+    "https://beforest.co/",
+    "https://experiences.beforest.co/",
+    "https://hospitality.beforest.co/",
+    "https://10percent.beforest.co/",
+]
+LIVE_SEARCH_ALLOWED_HOSTS = {
+    "beforest.co",
+    "experiences.beforest.co",
+    "hospitality.beforest.co",
+    "10percent.beforest.co",
+    "bewild.life",
+}
 DEFAULT_HTTP_TIMEOUT_SECONDS = 10.0
 OUTLINE_PAGE_SIZE = 100
+LIVE_SEARCH_CACHE_TTL_SECONDS = 300
+LIVE_SEARCH_MAX_PAGES = 24
 _OUTLINE_TAG_RE = re.compile(r"<[^>]+>")
 _COMMON_QUERY_TERMS = {
     "a",
@@ -46,6 +61,10 @@ _OUTLINE_CACHE: dict[str, object] = {
     "chunks": [],
     "fetched_at": 0.0,
     "error": "",
+}
+_LIVE_SEARCH_CACHE: dict[str, object] = {
+    "pages": [],
+    "fetched_at": 0.0,
 }
 
 
@@ -298,7 +317,10 @@ def _load_outline_index() -> tuple[list[dict[str, object]], list[dict[str, objec
 
 def _is_allowed_beforest_url(url: str) -> bool:
     parsed = urlparse(url)
-    return parsed.scheme in {"http", "https"} and parsed.netloc.endswith("beforest.co")
+    return parsed.scheme in {"http", "https"} and (
+        parsed.netloc in LIVE_SEARCH_ALLOWED_HOSTS
+        or parsed.netloc.endswith(".beforest.co")
+    )
 
 
 class _VisibleHTMLParser(HTMLParser):
@@ -363,10 +385,65 @@ def _fetch_beforest_page(url: str) -> dict[str, object]:
             links.append(absolute_url)
     return {
         "url": url,
+        "host": urlparse(url).netloc,
         "title": _normalize_text(" ".join(parser.title_parts)) or url,
         "text": _normalize_text(" ".join(parser.parts)),
         "links": links,
     }
+
+
+def _likely_detail_link(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.strip("/").lower()
+    if not path:
+        return False
+    if path in {"about", "contact"}:
+        return False
+    return len(path.split("/")) >= 1
+
+
+def _load_live_search_pages() -> list[dict[str, object]]:
+    now = datetime.now(timezone.utc).timestamp()
+    cached_pages = _LIVE_SEARCH_CACHE.get("pages", [])
+    fetched_at = float(_LIVE_SEARCH_CACHE.get("fetched_at", 0.0))
+    if (
+        now - fetched_at < LIVE_SEARCH_CACHE_TTL_SECONDS
+        and isinstance(cached_pages, list)
+        and cached_pages
+    ):
+        return [page for page in cached_pages if isinstance(page, dict)]
+
+    queue = list(LIVE_SEARCH_SEEDS)
+    seen: set[str] = set()
+    pages: list[dict[str, object]] = []
+
+    while queue and len(pages) < LIVE_SEARCH_MAX_PAGES:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        try:
+            page = _fetch_beforest_page(current)
+        except (ValueError, RuntimeError):
+            continue
+        pages.append(page)
+
+        for link in page.get("links", []):
+            if not isinstance(link, str):
+                continue
+            if link in seen or link in queue:
+                continue
+            if not _is_allowed_beforest_url(link):
+                continue
+            if len(queue) + len(pages) >= LIVE_SEARCH_MAX_PAGES:
+                break
+            if _likely_detail_link(link) or link.endswith("/"):
+                queue.append(link)
+
+    _LIVE_SEARCH_CACHE["pages"] = pages
+    _LIVE_SEARCH_CACHE["fetched_at"] = now
+    _log_knowledge_trace(f"Live search cache refreshed pages={len(pages)}")
+    return pages
 
 
 @tool
@@ -429,23 +506,83 @@ def browse_beforest_page(url: str, query: str = "") -> dict[str, object]:
 
 
 @tool
-def search_beforest_experiences(query: str, max_results: int = 3) -> list[dict[str, str | int]]:
-    """Search the experiences.beforest.co site homepage as a lightweight live fallback."""
-    try:
-        page = _fetch_beforest_page(EXPERIENCES_BASE_URL)
-    except (ValueError, RuntimeError):
-        return []
+def search_beforest_live(query: str, max_results: int = 5) -> list[dict[str, str | int]]:
+    """Search live Beforest-owned websites for current offerings, listings, and page-level details."""
+    _log_knowledge_trace(f"search_beforest_live query={query!r} max_results={max_results}")
+    pages = _load_live_search_pages()
+    scored_pages: list[tuple[int, dict[str, object]]] = []
+    for page in pages:
+        title = str(page.get("title", ""))
+        text = str(page.get("text", ""))
+        url = str(page.get("url", ""))
+        host = str(page.get("host", ""))
+        score = _score_text(query, title) * 4 + _score_text(query, text)
+        if "experiences.beforest.co" in host:
+            score += 3
+        if "experience" in url.lower() or "retreat" in url.lower():
+            score += 2
+        if score > 0:
+            scored_pages.append((score, page))
 
-    score = _score_text(query, str(page["text"]))
-    if score <= 0:
-        return []
-    return [
-        {
-            "source": str(page["title"]),
-            "score": score,
-            "snippet": _build_snippet(str(page["text"]), query, limit=500),
-        }
-    ][:max_results]
+    scored_pages.sort(key=lambda item: item[0], reverse=True)
+    results: list[dict[str, str | int]] = []
+    seen_urls: set[str] = set()
+    for score, page in scored_pages:
+        url = str(page.get("url", ""))
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
+        results.append(
+            {
+                "source": str(page.get("title", url or "Untitled Beforest page")),
+                "score": score,
+                "snippet": _build_snippet(str(page.get("text", "")), query, limit=500),
+                "url": url,
+            }
+        )
+        if len(results) >= max_results:
+            break
+
+    _log_knowledge_trace(
+        "Live search results: " + ", ".join(str(item.get("source", "")) for item in results)
+    )
+    return results
+
+
+@tool
+def search_beforest_experiences(query: str, max_results: int = 5) -> list[dict[str, str | int]]:
+    """Search live Beforest experiences content with stronger crawling and ranking."""
+    pages = [
+        page
+        for page in _load_live_search_pages()
+        if str(page.get("host", "")) == "experiences.beforest.co"
+    ]
+    scored_pages: list[tuple[int, dict[str, object]]] = []
+    for page in pages:
+        title = str(page.get("title", ""))
+        text = str(page.get("text", ""))
+        url = str(page.get("url", ""))
+        score = _score_text(query, title) * 5 + _score_text(query, text)
+        if any(token in url.lower() for token in ("experience", "retreat", "event", "workshop")):
+            score += 2
+        if score > 0:
+            scored_pages.append((score, page))
+
+    scored_pages.sort(key=lambda item: item[0], reverse=True)
+    results: list[dict[str, str | int]] = []
+    for score, page in scored_pages[:max_results]:
+        results.append(
+            {
+                "source": str(page.get("title", "Untitled experience page")),
+                "score": score,
+                "snippet": _build_snippet(str(page.get("text", "")), query, limit=500),
+                "url": str(page.get("url", "")),
+            }
+        )
+    _log_knowledge_trace(
+        "Experience results: " + ", ".join(str(item.get("source", "")) for item in results)
+    )
+    return results
 
 
 def get_knowledge_source_status() -> dict[str, object]:

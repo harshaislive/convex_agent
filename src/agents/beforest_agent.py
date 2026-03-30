@@ -11,6 +11,7 @@ from agents.beforest_tools import (
     browse_beforest_page,
     search_beforest_experiences,
     search_beforest_knowledge,
+    search_beforest_live,
 )
 from core import get_model, settings
 
@@ -18,6 +19,7 @@ PROMPT_PATH = Path(__file__).parent / "beforest" / "AGENTS.md"
 SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8").strip()
 tools = [
     search_beforest_knowledge,
+    search_beforest_live,
     search_beforest_experiences,
     browse_beforest_page,
 ]
