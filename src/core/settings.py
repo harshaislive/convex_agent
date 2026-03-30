@@ -101,6 +101,11 @@ class Settings(BaseSettings):
     COMPATIBLE_API_KEY: SecretStr | None = None
     COMPATIBLE_BASE_URL: str | None = None
 
+    # Azure AI Foundry OpenAI-compatible path
+    AZURE_AI_API_KEY: SecretStr | None = None
+    AZURE_AI_BASE_URL: str | None = None
+    AZURE_AI_MODEL: str | None = None
+
     OPENWEATHERMAP_API_KEY: SecretStr | None = None
 
     # MCP Configuration
@@ -165,6 +170,17 @@ class Settings(BaseSettings):
     )
 
     def model_post_init(self, __context: Any) -> None:
+        if (
+            self.COMPATIBLE_BASE_URL is None
+            and self.COMPATIBLE_MODEL is None
+            and self.AZURE_AI_BASE_URL
+            and self.AZURE_AI_MODEL
+            and self.AZURE_AI_API_KEY
+        ):
+            self.COMPATIBLE_BASE_URL = self.AZURE_AI_BASE_URL
+            self.COMPATIBLE_MODEL = self.AZURE_AI_MODEL
+            self.COMPATIBLE_API_KEY = self.AZURE_AI_API_KEY
+
         api_keys = {
             Provider.OPENAI: self.OPENAI_API_KEY,
             Provider.OPENAI_COMPATIBLE: self.COMPATIBLE_BASE_URL and self.COMPATIBLE_MODEL,
