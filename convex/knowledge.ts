@@ -235,6 +235,25 @@ export const getEntry = query({
   },
 });
 
+export const deleteEntry = mutation({
+  args: {
+    slug: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("knowledge_entries")
+      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
+      .first();
+
+    if (!existing) {
+      return { deleted: false };
+    }
+
+    await ctx.db.delete(existing._id);
+    return { deleted: true, slug: args.slug };
+  },
+});
+
 export const searchEntries = query({
   args: {
     query: v.string(),

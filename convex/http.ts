@@ -160,4 +160,21 @@ http.route({
   }),
 });
 
+http.route({
+  path: "/knowledge/delete-entry",
+  method: "POST",
+  handler: httpAction(async (ctx, req) => {
+    const expectedSecret = process.env.AGENT_SHARED_SECRET;
+    const providedSecret = req.headers.get("x-agent-secret");
+
+    if (!expectedSecret || providedSecret !== expectedSecret) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const body = await req.json();
+    const result = await ctx.runMutation(api.knowledge.deleteEntry, omitNullishFields(body as Record<string, unknown>));
+    return Response.json({ ok: true, ...result });
+  }),
+});
+
 export default http;

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from agent import generate_reply_bundle
 from knowledge_center import (
     SESSION_COOKIE_NAME,
+    delete_entry,
     import_url_entry,
     is_authenticated,
     list_entries,
@@ -259,6 +260,18 @@ def knowledge_center_search(
             audience=payload.audience or None,
             max_results=payload.max_results,
         )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.delete("/knowledge-center/api/entries/{slug}")
+def knowledge_center_delete_entry(slug: str, request: Request) -> dict[str, Any]:
+    """Delete one structured knowledge entry."""
+    _require_knowledge_auth(request)
+    try:
+        return delete_entry(slug)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
