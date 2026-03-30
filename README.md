@@ -11,6 +11,8 @@ This workspace now also includes a `beforest-agent`:
 
 - Outline is the source of truth for approved knowledge
 - Convex stores DM conversation events
+- Convex conversation history is loaded before a Beforest reply
+- ManyChat push-back is supported on the Beforest reply route
 - `POST /beforest/reply` provides a DM-friendly response endpoint
 - `GET /health/knowledge` verifies Outline retrieval
 

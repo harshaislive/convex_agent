@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     CONVEX_SITE_URL: str | None = None
     AGENT_SHARED_SECRET: SecretStr | None = None
     TRACE_KNOWLEDGE_CALLS: bool = False
+    MANYCHAT_API_TOKEN: SecretStr | None = None
+    MANYCHAT_API_BASE_URL: str = "https://api.manychat.com"
+    MANYCHAT_CHANNEL: str = "instagram"
 
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"

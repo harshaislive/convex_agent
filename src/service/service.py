@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import re
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -114,6 +115,7 @@ class BeforestReplyRequest(BaseModel):
     thread_id: str | None = None
     subscriber_data: dict[str, Any] = Field(default_factory=dict)
     manychat_subscriber_id: str | None = None
+    push_to_manychat: bool = False
 
 
 class BeforestReplyResponse(BaseModel):
@@ -128,6 +130,44 @@ def _convex_history_url() -> str | None:
     if settings.CONVEX_SITE_URL:
         return str(settings.CONVEX_SITE_URL).rstrip("/") + "/instagram/store-dm-event"
     return None
+
+
+def _convex_base_url() -> str | None:
+    if settings.CONVEX_HTTP_ACTION_URL:
+        return str(settings.CONVEX_HTTP_ACTION_URL).replace("/instagram/store-dm-event", "")
+    if settings.CONVEX_SITE_URL:
+        return str(settings.CONVEX_SITE_URL).rstrip("/")
+    return None
+
+
+async def _load_beforest_history_from_convex(contact_id: str) -> list[HumanMessage | AIMessage]:
+    base_url = _convex_base_url()
+    if not base_url or not settings.AGENT_SHARED_SECRET:
+        return []
+
+    history_url = f"{base_url}/instagram/conversation-history?contactId={contact_id}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            history_url,
+            headers={"x-agent-secret": settings.AGENT_SHARED_SECRET.get_secret_value()},
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    if not isinstance(payload, list):
+        return []
+
+    messages: list[HumanMessage | AIMessage] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        human_text = str(item.get("message", "") or "").strip()
+        ai_text = str(item.get("agentReplyText", "") or "").strip()
+        if human_text:
+            messages.append(HumanMessage(content=human_text))
+        if ai_text:
+            messages.append(AIMessage(content=ai_text))
+    return messages
 
 
 async def _save_beforest_event_to_convex(
@@ -188,6 +228,60 @@ async def _save_beforest_event_to_convex(
         response.raise_for_status()
 
 
+def _extract_urls(text: str) -> list[str]:
+    return [match.rstrip(".,!?") for match in re.findall(r"https://[^\s)]+", text)]
+
+
+def _button_caption_for_url(url: str) -> str:
+    lower_url = url.lower()
+    if "experiences.beforest.co" in lower_url:
+        return "Explore Experiences"
+    if "hospitality.beforest.co" in lower_url:
+        return "View Stays"
+    if "10percent.beforest.co" in lower_url:
+        return "Explore 10%"
+    if "bewild.life" in lower_url:
+        return "Explore Products"
+    return "Explore Beforest"
+
+
+async def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
+    if not settings.MANYCHAT_API_TOKEN:
+        return
+
+    buttons = [
+        {"type": "url", "caption": _button_caption_for_url(url), "url": url}
+        for url in _extract_urls(reply_text)[:3]
+    ]
+    message: dict[str, Any] = {"type": "text", "text": reply_text}
+    if buttons:
+        message["buttons"] = buttons
+
+    payload = {
+        "subscriber_id": int(subscriber_id),
+        "data": {
+            "version": "v2",
+            "content": {
+                "type": settings.MANYCHAT_CHANNEL,
+                "messages": [message],
+                "actions": [],
+                "quick_replies": [],
+            },
+        },
+    }
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            f"{settings.MANYCHAT_API_BASE_URL.rstrip('/')}/fb/sending/sendContent",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {settings.MANYCHAT_API_TOKEN.get_secret_value()}",
+                "Content-Type": "application/json",
+            },
+        )
+        response.raise_for_status()
+
+
 @router.get("/info")
 async def info() -> ServiceMetadata:
     models = list(settings.AVAILABLE_MODELS)
@@ -208,6 +302,20 @@ async def knowledge_health() -> dict[str, object]:
 @router.post("/beforest/reply")
 async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse:
     agent = get_agent("beforest-agent")
+    contact_id = request.manychat_subscriber_id or request.user_id
+    if not contact_id:
+        for key in (
+            "contact_id",
+            "contactId",
+            "subscriber_id",
+            "subscriberId",
+            "manychat_subscriber_id",
+        ):
+            value = request.subscriber_data.get(key)
+            if value:
+                contact_id = str(value)
+                break
+
     user_input = UserInput(
         message=request.message,
         thread_id=request.thread_id,
@@ -215,6 +323,10 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
         agent_config={"subscriber_data": request.subscriber_data},
     )
     kwargs, _ = await _handle_input(user_input, agent)
+    history_messages = (
+        await _load_beforest_history_from_convex(str(contact_id)) if contact_id else []
+    )
+    kwargs["input"] = {"messages": [*history_messages, HumanMessage(content=request.message)]}
     response_events: list[tuple[str, Any]] = await agent.ainvoke(
         **kwargs, stream_mode=["updates", "values"]
     )  # type: ignore[arg-type]
@@ -238,6 +350,12 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
         )
     except Exception as exc:
         logger.error(f"Failed to write Beforest event to Convex: {exc}")
+
+    if request.push_to_manychat and contact_id:
+        try:
+            await _push_manychat_reply(str(contact_id), output.content)
+        except Exception as exc:
+            logger.error(f"Failed to push Beforest reply to ManyChat: {exc}")
 
     return BeforestReplyResponse(ok=True, reply=output.content, thread_id=str(thread_id))
 
