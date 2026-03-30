@@ -419,7 +419,7 @@ def render_knowledge_center_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knowledge Center</title>
   <style>
-  :root { --bg:#ffffff; --ink:#050505; --muted:#707070; --line:#d9d9d9; --line-strong:#0f0f0f; --soft:#f5f5f5; --soft-2:#fafafa; --radius:22px; }
+  :root { --bg:#f3f3f3; --ink:#050505; --muted:#707070; --line:#d5d5d5; --line-strong:#0f0f0f; --soft:#ffffff; --soft-2:#f8f8f8; --soft-3:#efefef; --radius:18px; }
   * { box-sizing:border-box; }
   html { scroll-behavior:smooth; }
   body { margin:0; background:var(--bg); color:var(--ink); font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
@@ -431,15 +431,15 @@ def render_knowledge_center_html() -> str:
   input, select, textarea { width:100%; border:1px solid var(--line); border-radius:16px; padding:13px 15px; background:#fff; }
   input:focus, select:focus, textarea:focus { outline:none; border-color:var(--line-strong); box-shadow:0 0 0 3px rgba(0,0,0,0.04); }
   textarea { resize:vertical; min-height:140px; line-height:1.6; }
-  .page { width:min(1500px, calc(100vw - 32px)); margin:0 auto; padding:22px 0 34px; }
-  .topbar { display:flex; justify-content:space-between; gap:28px; align-items:flex-end; padding:8px 0 26px; border-bottom:1px solid var(--line-strong); margin-bottom:24px; }
-  .title-block h1 { margin:0; font-family:"Iowan Old Style", Georgia, "Times New Roman", serif; font-size:clamp(3rem, 6.2vw, 6rem); line-height:.88; letter-spacing:-.075em; font-weight:400; }
-  .title-block p { margin:12px 0 0; color:var(--muted); max-width:760px; font-size:1rem; line-height:1.6; }
-  .mini { font-size:.72rem; text-transform:uppercase; letter-spacing:.18em; color:var(--muted); }
-  .top-actions { display:flex; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
-  .workspace { display:grid; grid-template-columns:340px minmax(0, 1fr); gap:22px; align-items:start; }
-  .panel { border:1px solid var(--line-strong); border-radius:var(--radius); min-height:0; background:#fff; overflow:hidden; }
-  .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:18px 20px; border-bottom:1px solid var(--line); background:var(--soft-2); }
+  .page { width:min(1520px, calc(100vw - 30px)); margin:0 auto; padding:18px 0 28px; }
+  .topbar { display:flex; justify-content:space-between; gap:24px; align-items:center; padding:14px 18px; border:1px solid var(--line-strong); border-radius:22px; background:#fff; margin-bottom:18px; }
+  .title-block h1 { margin:0; font-size:clamp(2rem, 4vw, 3.6rem); line-height:.95; letter-spacing:-.06em; font-weight:700; font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
+  .title-block p { margin:8px 0 0; color:var(--muted); max-width:720px; font-size:.95rem; line-height:1.55; }
+  .mini { font-size:.7rem; text-transform:uppercase; letter-spacing:.16em; color:var(--muted); }
+  .top-actions { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+  .workspace { display:grid; grid-template-columns:320px minmax(0, 1fr); gap:18px; align-items:start; }
+  .panel { border:1px solid var(--line); border-radius:var(--radius); min-height:0; background:#fff; overflow:hidden; box-shadow:0 1px 0 rgba(0,0,0,0.02); }
+  .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:16px 18px; border-bottom:1px solid var(--line); background:var(--soft-2); }
   .panel-head h2 { margin:0; font:700 .78rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
   .panel-body { padding:20px; }
   .stack { display:grid; gap:16px; }
@@ -447,36 +447,36 @@ def render_knowledge_center_html() -> str:
   .field label { font:.7rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.16em; color:var(--muted); }
   .form-grid { display:flex; gap:12px; flex-wrap:wrap; }
   .form-grid > * { flex:1 1 170px; }
-  .entry-list { display:grid; gap:10px; max-height:calc(100vh - 312px); overflow:auto; padding-right:4px; }
-  .entry-card { width:100%; text-align:left; border:1px solid var(--line); border-radius:18px; padding:15px; background:#fff; color:var(--ink); }
-  .entry-card.active { border-color:var(--line-strong); background:var(--soft); }
-  .entry-card h3 { margin:0 0 7px; font-family:"Iowan Old Style", Georgia, "Times New Roman", serif; font-size:1.12rem; line-height:1.05; font-weight:400; }
+  .entry-list { display:grid; gap:8px; max-height:calc(100vh - 278px); overflow:auto; padding-right:4px; }
+  .entry-card { width:100%; text-align:left; border:1px solid transparent; border-radius:16px; padding:14px; background:#fff; color:var(--ink); }
+  .entry-card.active { border-color:var(--line-strong); background:var(--soft-3); }
+  .entry-card h3 { margin:0 0 7px; font-size:1rem; line-height:1.1; font-weight:600; font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
   .entry-card p { margin:0; color:var(--muted); font-size:.88rem; line-height:1.5; }
   .entry-meta { margin-top:8px; color:var(--muted); font-size:.74rem; text-transform:uppercase; letter-spacing:.08em; }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
   .pill { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font:.66rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.1em; }
   .textarea-body { min-height:50vh; font-family:"Iowan Old Style", Georgia, "Times New Roman", serif; font-size:1rem; }
-  .preview-block { border:1px solid var(--line); border-radius:18px; padding:16px; background:var(--soft); }
+  .preview-block { border:1px solid var(--line); border-radius:16px; padding:16px; background:var(--soft-2); }
   .preview-block h3 { margin:0 0 10px; font:700 .76rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.16em; }
   .preview-body { white-space:pre-wrap; line-height:1.58; max-height:40vh; overflow:auto; font-size:.94rem; }
   .workspace-main { display:grid; gap:16px; }
-  .guide { border:1px solid var(--line); border-radius:18px; padding:18px; background:var(--soft-2); }
+  .guide { border:1px solid var(--line); border-radius:16px; padding:16px; background:var(--soft-2); }
   .guide strong { display:block; margin-bottom:8px; font:.72rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
   .guide p { margin:0; color:var(--muted); line-height:1.55; font-size:.94rem; }
   .mode-switch { display:flex; gap:8px; flex-wrap:wrap; }
   .mode-switch button { background:#fff; color:#000; }
   .mode-switch button.active { background:#000; color:#fff; }
   .section-title { display:flex; justify-content:space-between; align-items:end; gap:10px; }
-  .section-title h3 { margin:0; font-family:"Iowan Old Style", Georgia, "Times New Roman", serif; font-size:1.55rem; font-weight:400; letter-spacing:-.03em; }
+  .section-title h3 { margin:0; font-size:1.3rem; font-weight:700; letter-spacing:-.03em; font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
   .section-title p { margin:4px 0 0; color:var(--muted); font-size:.92rem; }
   .split { display:grid; grid-template-columns:minmax(0, 1fr) 320px; gap:16px; align-items:start; }
-  .detail-card { border:1px solid var(--line); border-radius:18px; padding:16px; background:#fff; }
+  .detail-card { border:1px solid var(--line); border-radius:16px; padding:16px; background:#fff; }
   .detail-card h4 { margin:0 0 10px; font:.72rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.16em; color:var(--muted); }
   .detail-card p { margin:0; color:var(--muted); line-height:1.5; font-size:.9rem; }
   .hide { display:none; }
   .login-wrap { min-height:100vh; display:grid; place-items:center; padding:18px; }
-  .login-card { width:min(480px, 100%); border:1px solid var(--line-strong); border-radius:28px; padding:34px; }
-  .login-card h1 { margin:0 0 12px; font-family:"Iowan Old Style", Georgia, "Times New Roman", serif; font-size:clamp(3rem, 10vw, 5rem); line-height:.88; letter-spacing:-.085em; font-weight:400; }
+  .login-card { width:min(460px, 100%); border:1px solid var(--line-strong); border-radius:22px; padding:30px; background:#fff; }
+  .login-card h1 { margin:0 0 12px; font-size:clamp(2.4rem, 9vw, 4.2rem); line-height:.92; letter-spacing:-.06em; font-weight:700; font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
   .login-card p, .status, .empty { color:var(--muted); }
   .status { min-height:1.2rem; font:.84rem/1.4 "IBM Plex Sans", Arial, sans-serif; }
   .status.error { color:#000; font-weight:700; }
@@ -697,9 +697,9 @@ def render_knowledge_center_html() -> str:
       <div class="page">
         <section class="topbar">
           <div class="title-block">
-            <div class="mini">convex-backed editorial control</div>
+            <div class="mini">convex knowledge admin</div>
             <h1>Knowledge Center</h1>
-            <p>Black and white workspace for writing, importing, and revising the agent knowledge base.</p>
+            <p>Manage the agent knowledge base, import source material, and test retrieval from one place.</p>
           </div>
           <div class="top-actions">
             <button type="button" class="secondary" id="new-entry">New entry</button>
@@ -721,8 +721,8 @@ def render_knowledge_center_html() -> str:
           </aside>
           <section class="workspace-main">
             <div class="guide">
-              <strong>Simple flow</strong>
-              <p>Pick an entry from the library to edit it. Use <em>New entry</em> to write from scratch. If content lives on a webpage, use <em>Import</em> first, then return to <em>Write</em> to clean it up.</p>
+              <strong>Recommended flow</strong>
+              <p>Select an existing entry to revise it. Use <em>New entry</em> for something original. Use <em>Import</em> to pull in a webpage, then switch back to <em>Write</em> to clean and structure it.</p>
             </div>
             <section class="panel">
               <div class="panel-head">
@@ -763,18 +763,18 @@ def render_knowledge_center_html() -> str:
                 <div class="top-actions"><button type="submit">Save entry</button><div class="status" data-status></div></div>
                     </form>
                     <div class="stack">
-                      <div class="detail-card"><h4>Summary</h4><p>${esc(active.summary || "Write a short summary so this entry is easy to scan in the library.")}</p></div>
+                      <div class="detail-card"><h4>What this entry says</h4><p>${esc(active.summary || "Write a short summary so this entry is easy to scan in the library.")}</p></div>
                       <div class="detail-card"><h4>Tags</h4><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
-                      <div class="detail-card"><h4>Intent + Audience</h4><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
-                      <div class="detail-card"><h4>Preview</h4><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
+                      <div class="detail-card"><h4>Routing metadata</h4><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
+                      <div class="detail-card"><h4>Content preview</h4><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
                     </div>
                   </div>
                 </section>
                 <section class="${state.activePane === "import" ? "" : "hide"} stack">
                   <div class="section-title">
                     <div>
-                      <h3>Import from a website</h3>
-                      <p>Use this when you want to pull source material into Convex first, then refine it as an entry.</p>
+                      <h3>Import source page</h3>
+                      <p>Pull content from a webpage into Convex, then revise it before approving it for the agent.</p>
                     </div>
                   </div>
                   <form id="import-form" class="stack">
@@ -798,7 +798,7 @@ def render_knowledge_center_html() -> str:
                   <div class="section-title">
                     <div>
                       <h3>Retrieval test</h3>
-                      <p>Run a query and inspect exactly which entries the agent would use.</p>
+                      <p>Run a query and inspect exactly which entries the agent would use first.</p>
                     </div>
                   </div>
                   <form id="test-form" class="stack">
