@@ -755,4 +755,3 @@ def render_knowledge_center_html() -> str:
   </script>
 </body>
 </html>"""
-"""
