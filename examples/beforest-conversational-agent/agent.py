@@ -110,6 +110,42 @@ def _build_context_messages(
     ]
 
 
+def _build_knowledge_context_messages(question: str) -> list[dict[str, str]]:
+    """Preload grounded Beforest knowledge so replies do not depend on tool choice alone."""
+    try:
+        results = search_beforest_knowledge.invoke(
+            {
+                "query": question,
+                "max_results": 3,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        if os.getenv("DEBUG_KNOWLEDGE_ERRORS", "").strip().lower() == "true":
+            print(f"[knowledge] preload failed: {exc}", flush=True)
+        return []
+
+    if not isinstance(results, list) or not results:
+        return []
+
+    lines = [
+        "Beforest knowledge context from the source of truth.",
+        "Use this context for factual answers. If it does not cover the answer, say that plainly.",
+    ]
+    for index, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+        source = str(item.get("source", "Unknown source"))
+        snippet = str(item.get("snippet", "")).strip()
+        if not snippet:
+            continue
+        lines.append(f"{index}. {source}: {snippet}")
+
+    if len(lines) <= 2:
+        return []
+
+    return [{"role": "system", "content": "\n".join(lines)}]
+
+
 def _resolve_manychat_subscriber_id(
     explicit_subscriber_id: str | None,
     subscriber_data: dict[str, Any],
@@ -541,6 +577,7 @@ def generate_reply_bundle(
         subscriber_data or {},
     )
     context_messages = _build_context_messages(user_id, subscriber_data or {})
+    knowledge_messages = _build_knowledge_context_messages(question)
 
     if resolved_manychat_subscriber_id:
         history_messages = _load_thread_history_from_convex(
@@ -554,6 +591,7 @@ def generate_reply_bundle(
             "messages": [
                 *history_messages,
                 *context_messages,
+                *knowledge_messages,
                 {"role": "user", "content": question},
             ]
         },
@@ -641,8 +679,9 @@ def run_interactive(
             continue
 
         messages.append({"role": "user", "content": user_input})
+        knowledge_messages = _build_knowledge_context_messages(user_input)
         result = agent.invoke(
-            {"messages": messages},
+            {"messages": [*messages[:-1], *knowledge_messages, messages[-1]]},
             config={"configurable": {"thread_id": resolved_thread_id}},
         )
         final_message = result["messages"][-1]
