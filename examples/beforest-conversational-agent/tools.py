@@ -67,6 +67,12 @@ def _normalize_text(text: str) -> str:
     return " ".join(text.split())
 
 
+def _normalize_block(text: str) -> str:
+    """Keep line breaks while cleaning noisy spacing inside a block."""
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line)
+
+
 def _strip_html_tags(text: str) -> str:
     """Remove simple inline HTML markers returned by Outline search."""
     return _OUTLINE_TAG_RE.sub("", text)
@@ -83,6 +89,45 @@ def _query_terms(query: str) -> list[str]:
     ]
     ordered = sorted(dict.fromkeys(filtered), key=lambda term: (-len(term), term))
     return ordered or [term for term in raw_terms if term]
+
+
+def _split_text_blocks(text: str) -> list[str]:
+    """Split markdown-like text into meaningful retrieval blocks."""
+    raw_blocks = re.split(r"\n\s*\n", text)
+    blocks = [_normalize_block(block) for block in raw_blocks]
+    return [block for block in blocks if block]
+
+
+def _best_matching_block(text: str, query: str) -> str:
+    """Pick the most relevant block from a longer markdown document."""
+    blocks = _split_text_blocks(text)
+    if not blocks:
+        return _normalize_text(text)
+
+    scored_blocks: list[tuple[int, str]] = []
+    for block in blocks:
+        score = _score_text(query, block)
+        if score > 0:
+            scored_blocks.append((score, block))
+
+    if not scored_blocks:
+        return _normalize_text(text)
+
+    scored_blocks.sort(key=lambda item: item[0], reverse=True)
+    best_block = scored_blocks[0][1]
+
+    # If the best block is a heading, include the next block for substance.
+    try:
+        best_index = blocks.index(best_block)
+    except ValueError:
+        return best_block
+
+    if best_index + 1 < len(blocks):
+        next_block = blocks[best_index + 1]
+        if _score_text(query, next_block) > 0 or best_block.endswith("**"):
+            return f"{best_block}\n{next_block}"
+
+    return best_block
 
 
 def _knowledge_debug_enabled() -> bool:
@@ -205,7 +250,7 @@ def _load_outline_knowledge_results(
             {
                 "source": title,
                 "score": score,
-                "snippet": _build_snippet(snippet_source, query),
+                "snippet": _build_snippet(body or snippet_source, query, limit=900),
             }
         )
 
@@ -312,7 +357,8 @@ def _load_convex_knowledge_results(
 
 def _build_snippet(text: str, query: str, limit: int = 360) -> str:
     """Extract a short snippet around the first matched term when possible."""
-    compact = _normalize_text(text)
+    best_block = _best_matching_block(text, query)
+    compact = _normalize_text(best_block)
     if len(compact) <= limit:
         return compact
 
