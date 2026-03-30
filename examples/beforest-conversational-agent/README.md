@@ -41,6 +41,12 @@ If you want to limit retrieval to a single collection, also set:
 OUTLINE_COLLECTION_ID=your_collection_uuid
 ```
 
+Optional retrieval tuning:
+
+```bash
+OUTLINE_CACHE_TTL_SECONDS=300
+```
+
 For your Azure AI Foundry deployment, use:
 
 ```bash
@@ -77,6 +83,8 @@ To verify the deployed knowledge connection:
 ```bash
 curl http://localhost:8000/health/knowledge
 ```
+
+This now reports Outline cache status too, including document and chunk counts.
 
 If you need retrieval error details in logs, set:
 

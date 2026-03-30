@@ -54,6 +54,14 @@ _COMMON_QUERY_TERMS = {
     "who",
     "why",
 }
+OUTLINE_CACHE_TTL_SECONDS = int(os.getenv("OUTLINE_CACHE_TTL_SECONDS", "300"))
+OUTLINE_PAGE_SIZE = int(os.getenv("OUTLINE_PAGE_SIZE", "100"))
+_OUTLINE_CACHE: dict[str, object] = {
+    "docs": [],
+    "chunks": [],
+    "fetched_at": 0.0,
+    "error": "",
+}
 
 
 def _score_text(query: str, text: str) -> int:
@@ -130,6 +138,65 @@ def _best_matching_block(text: str, query: str) -> str:
     return best_block
 
 
+def _heading_line(line: str) -> str:
+    stripped = line.strip()
+    if not stripped:
+        return ""
+    if stripped.startswith("#"):
+        return stripped.lstrip("#").strip()
+    if re.fullmatch(r"\*\*[^*]+\*\*", stripped):
+        return stripped.strip("*").strip()
+    return ""
+
+
+def _chunk_section(section_text: str, *, target_chars: int = 1200) -> list[str]:
+    """Split long sections into smaller chunks while preserving paragraph boundaries."""
+    blocks = _split_text_blocks(section_text)
+    if not blocks:
+        return []
+
+    chunks: list[str] = []
+    current = ""
+    for block in blocks:
+        candidate = block if not current else f"{current}\n\n{block}"
+        if current and len(candidate) > target_chars:
+            chunks.append(current)
+            current = block
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _extract_outline_sections(text: str) -> list[str]:
+    """Convert a document into heading-aware sections for retrieval."""
+    lines = text.splitlines()
+    sections: list[str] = []
+    current_heading = ""
+    current_lines: list[str] = []
+
+    def flush() -> None:
+        nonlocal current_lines
+        body = "\n".join(current_lines).strip()
+        if current_heading and body:
+            sections.extend(_chunk_section(f"{current_heading}\n\n{body}"))
+        elif body:
+            sections.extend(_chunk_section(body))
+        current_lines = []
+
+    for line in lines:
+        heading = _heading_line(line)
+        if heading:
+            flush()
+            current_heading = heading
+            continue
+        current_lines.append(line)
+
+    flush()
+    return [section for section in sections if section.strip()]
+
+
 def _knowledge_debug_enabled() -> bool:
     return os.getenv("DEBUG_KNOWLEDGE_ERRORS", "").strip().lower() == "true"
 
@@ -174,25 +241,16 @@ def _get_outline_collection_id() -> str:
     ).strip()
 
 
-def _load_outline_knowledge_results(
-    query: str,
-    *,
-    max_results: int,
-) -> list[dict[str, str | int]]:
-    """Search Outline documents and return grounded snippets."""
+def _outline_request(path: str, payload: dict[str, object]) -> dict[str, object]:
+    """Call an Outline API endpoint and return parsed JSON."""
     api_base = _get_outline_api_base()
     token = _get_outline_token()
     if not api_base or not token:
-        _log_knowledge_error("Outline search skipped because URL or token is missing.")
-        return []
-
-    payload = {"query": query, "limit": max_results}
-    collection_id = _get_outline_collection_id()
-    if collection_id:
-        payload["collectionId"] = collection_id
+        msg = "Outline URL or token is missing."
+        raise RuntimeError(msg)
 
     request = Request(
-        f"{api_base}/documents.search",
+        f"{api_base}/{path}",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {token}",
@@ -200,59 +258,172 @@ def _load_outline_knowledge_results(
         },
         method="POST",
     )
-
     try:
-        with urlopen(request, timeout=10) as response:  # noqa: S310
+        with urlopen(request, timeout=15) as response:  # noqa: S310
             raw = response.read().decode("utf-8", errors="replace")
     except HTTPError as exc:
         try:
             error_body = exc.read().decode("utf-8", errors="replace")
         except OSError:
             error_body = exc.reason if hasattr(exc, "reason") else ""
-        _log_knowledge_error(
-            f"Outline search failed with HTTP {exc.code}: {error_body or exc.reason}"
-        )
-        return []
+        raise RuntimeError(
+            f"Outline API {path} failed with HTTP {exc.code}: {error_body or exc.reason}"
+        ) from exc
     except OSError as exc:
-        _log_knowledge_error(f"Outline search failed with network error: {exc}")
-        return []
+        raise RuntimeError(f"Outline API {path} failed with network error: {exc}") from exc
 
     try:
         parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        _log_knowledge_error(f"Outline search returned non-JSON: {raw[:400]}")
-        return []
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"Outline API {path} returned non-JSON: {raw[:400]}") from exc
 
-    items = parsed.get("data", [])
-    if not isinstance(items, list):
-        _log_knowledge_error(f"Outline search returned unexpected payload: {raw[:400]}")
-        return []
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"Outline API {path} returned unexpected payload: {raw[:400]}")
+    return parsed
 
-    results: list[dict[str, str | int]] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        document = item.get("document", {})
-        if not isinstance(document, dict):
-            document = {}
+
+def _fetch_outline_documents() -> list[dict[str, object]]:
+    """Fetch all relevant Outline documents with pagination."""
+    docs: list[dict[str, object]] = []
+    offset = 0
+    collection_id = _get_outline_collection_id()
+
+    while True:
+        payload: dict[str, object] = {"limit": OUTLINE_PAGE_SIZE, "offset": offset}
+        if collection_id:
+            payload["collectionId"] = collection_id
+
+        parsed = _outline_request("documents.list", payload)
+        items = parsed.get("data", [])
+        if not isinstance(items, list):
+            break
+
+        page_docs = [item for item in items if isinstance(item, dict)]
+        docs.extend(page_docs)
+
+        pagination = parsed.get("pagination", {})
+        total = pagination.get("total", 0) if isinstance(pagination, dict) else 0
+        offset += len(page_docs)
+        if not page_docs or not isinstance(total, int) or offset >= total:
+            break
+
+    return docs
+
+
+def _build_outline_chunks(documents: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Transform Outline documents into heading-aware retrieval chunks."""
+    chunks: list[dict[str, object]] = []
+    for document in documents:
         title = str(document.get("title", "Untitled Outline document"))
-        context = _normalize_text(_strip_html_tags(str(item.get("context", "")).strip()))
-        body = _normalize_text(str(document.get("text", "")).strip())
-        snippet_source = context or body
-        if not snippet_source:
+        text = str(document.get("text", "") or "")
+        doc_id = str(document.get("id", ""))
+        url = str(document.get("url", "") or "")
+        collection_id = str(document.get("collectionId", "") or "")
+        if not text.strip():
             continue
-        ranking = item.get("ranking", 0)
-        try:
-            score = int(float(ranking) * 1000)
-        except (TypeError, ValueError):
-            score = 0
+
+        sections = _extract_outline_sections(text)
+        if not sections:
+            sections = _chunk_section(text)
+
+        for index, section in enumerate(sections):
+            chunks.append(
+                {
+                    "doc_id": doc_id,
+                    "title": title,
+                    "url": url,
+                    "collection_id": collection_id,
+                    "chunk_index": index,
+                    "text": section,
+                }
+            )
+    return chunks
+
+
+def _load_outline_index() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """Load or refresh the cached Outline document/chunk index."""
+    now = datetime.now(timezone.utc).timestamp()
+    fetched_at = float(_OUTLINE_CACHE.get("fetched_at", 0.0))
+    cached_docs = _OUTLINE_CACHE.get("docs", [])
+    cached_chunks = _OUTLINE_CACHE.get("chunks", [])
+
+    if (
+        now - fetched_at < OUTLINE_CACHE_TTL_SECONDS
+        and isinstance(cached_docs, list)
+        and isinstance(cached_chunks, list)
+        and cached_chunks
+    ):
+        return (
+            [item for item in cached_docs if isinstance(item, dict)],
+            [item for item in cached_chunks if isinstance(item, dict)],
+        )
+
+    documents = _fetch_outline_documents()
+    chunks = _build_outline_chunks(documents)
+    _OUTLINE_CACHE["docs"] = documents
+    _OUTLINE_CACHE["chunks"] = chunks
+    _OUTLINE_CACHE["fetched_at"] = now
+    _OUTLINE_CACHE["error"] = ""
+    _log_knowledge_trace(
+        f"Outline index refreshed docs={len(documents)} chunks={len(chunks)}"
+    )
+    return documents, chunks
+
+
+def _load_outline_knowledge_results(
+    query: str,
+    *,
+    max_results: int,
+) -> list[dict[str, str | int]]:
+    """Search the cached Outline section index and return grounded snippets."""
+    if not _get_outline_api_base() or not _get_outline_token():
+        _log_knowledge_error("Outline search skipped because URL or token is missing.")
+        return []
+
+    try:
+        _, chunks = _load_outline_index()
+    except RuntimeError as exc:
+        _OUTLINE_CACHE["error"] = str(exc)
+        _log_knowledge_error(str(exc))
+        return []
+
+    terms = _query_terms(query)
+    scored_chunks: list[tuple[int, dict[str, object]]] = []
+    for chunk in chunks:
+        title = str(chunk.get("title", ""))
+        text = str(chunk.get("text", ""))
+        if not text:
+            continue
+        body_score = _score_text(query, text)
+        title_score = _score_text(query, title) * 3
+        heading_bonus = 0
+        first_line = text.splitlines()[0].lower() if text.splitlines() else ""
+        for term in terms:
+            if term in first_line:
+                heading_bonus += 8
+        score = body_score + title_score + heading_bonus
+        if score <= 0:
+            continue
+        scored_chunks.append((score, chunk))
+
+    scored_chunks.sort(key=lambda item: item[0], reverse=True)
+
+    seen_sources: set[tuple[str, int]] = set()
+    results: list[dict[str, str | int]] = []
+    for score, chunk in scored_chunks:
+        key = (str(chunk.get("doc_id", "")), int(chunk.get("chunk_index", 0)))
+        if key in seen_sources:
+            continue
+        seen_sources.add(key)
         results.append(
             {
-                "source": title,
+                "source": str(chunk.get("title", "Untitled Outline document")),
                 "score": score,
-                "snippet": _build_snippet(body or snippet_source, query, limit=900),
+                "snippet": _build_snippet(str(chunk.get("text", "")), query, limit=900),
             }
         )
+        if len(results) >= max_results:
+            break
 
     return results
 
@@ -275,12 +446,21 @@ def get_knowledge_source_status() -> dict[str, object]:
         status["outlineError"] = "Missing Outline URL or token."
         return status
 
-    probe_results = _load_outline_knowledge_results("Beforest", max_results=3)
-    status["outlineReachable"] = True
+    probe_results = _load_outline_knowledge_results("Beforest goals 2040", max_results=3)
+    outline_error = str(_OUTLINE_CACHE.get("error", "") or "")
+    status["outlineReachable"] = outline_error == ""
     status["outlineResultCount"] = len(probe_results)
     status["outlineTopSources"] = [
         str(item.get("source", "")) for item in probe_results[:3]
     ]
+    status["outlineDocCount"] = len(
+        [item for item in _OUTLINE_CACHE.get("docs", []) if isinstance(item, dict)]
+    )
+    status["outlineChunkCount"] = len(
+        [item for item in _OUTLINE_CACHE.get("chunks", []) if isinstance(item, dict)]
+    )
+    if outline_error:
+        status["outlineError"] = outline_error
     if not probe_results:
         status["outlineWarning"] = "Outline is configured but returned no search results."
     return status
