@@ -419,7 +419,7 @@ def render_knowledge_center_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knowledge Center</title>
   <style>
-  :root { --bg:#fff; --ink:#000; --muted:#6a6a6a; --line:#dbdbdb; --soft:#f7f7f7; --radius:20px; }
+  :root { --bg:#fff; --ink:#000; --muted:#6a6a6a; --line:#dbdbdb; --soft:#f7f7f7; --soft-2:#fbfbfb; --radius:20px; }
   * { box-sizing:border-box; }
   body { margin:0; background:#fff; color:#000; font-family:Arial, Helvetica, sans-serif; }
   button, input, select, textarea { font:inherit; color:inherit; }
@@ -436,7 +436,7 @@ def render_knowledge_center_html() -> str:
   .title-block p { margin:10px 0 0; color:var(--muted); max-width:760px; font-size:1rem; line-height:1.55; }
   .mini { font-size:.76rem; text-transform:uppercase; letter-spacing:.16em; font-family:Arial, Helvetica, sans-serif; color:var(--muted); }
   .top-actions { display:flex; gap:10px; flex-wrap:wrap; }
-  .workspace { display:grid; grid-template-columns:320px minmax(0, 1.1fr) minmax(300px, .9fr); gap:18px; }
+  .workspace { display:grid; grid-template-columns:320px minmax(0, 1fr); gap:18px; }
   .panel { border:1px solid #000; border-radius:var(--radius); min-height:0; background:#fff; overflow:hidden; }
   .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:16px 18px; border-bottom:1px solid var(--line); background:var(--soft); }
   .panel-head h2 { margin:0; font:700 .8rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
@@ -451,12 +451,28 @@ def render_knowledge_center_html() -> str:
   .entry-card.active { border-color:#000; background:var(--soft); }
   .entry-card h3 { margin:0 0 6px; font-family:Georgia, "Times New Roman", serif; font-size:1.06rem; font-weight:400; }
   .entry-card p { margin:0; color:var(--muted); font-size:.87rem; line-height:1.45; }
+  .entry-meta { margin-top:8px; color:var(--muted); font-size:.74rem; text-transform:uppercase; letter-spacing:.08em; }
   .pill-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
   .pill { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font:.68rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.08em; }
   .textarea-body { min-height:50vh; font-family:Georgia, "Times New Roman", serif; font-size:.98rem; }
   .preview-block { border:1px solid var(--line); border-radius:16px; padding:15px; background:var(--soft); }
   .preview-block h3 { margin:0 0 10px; font:700 .78rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
   .preview-body { white-space:pre-wrap; line-height:1.58; max-height:40vh; overflow:auto; font-size:.94rem; }
+  .workspace-main { display:grid; gap:16px; }
+  .guide { border:1px solid var(--line); border-radius:16px; padding:16px; background:var(--soft-2); }
+  .guide strong { display:block; margin-bottom:6px; font:.76rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
+  .guide p { margin:0; color:var(--muted); line-height:1.5; font-size:.92rem; }
+  .mode-switch { display:flex; gap:8px; flex-wrap:wrap; }
+  .mode-switch button { background:#fff; color:#000; }
+  .mode-switch button.active { background:#000; color:#fff; }
+  .section-title { display:flex; justify-content:space-between; align-items:end; gap:10px; }
+  .section-title h3 { margin:0; font-family:Georgia, "Times New Roman", serif; font-size:1.4rem; font-weight:400; }
+  .section-title p { margin:4px 0 0; color:var(--muted); font-size:.92rem; }
+  .split { display:grid; grid-template-columns:minmax(0, 1fr) 320px; gap:16px; align-items:start; }
+  .detail-card { border:1px solid var(--line); border-radius:16px; padding:16px; background:#fff; }
+  .detail-card h4 { margin:0 0 10px; font:.74rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
+  .detail-card p { margin:0; color:var(--muted); line-height:1.5; font-size:.9rem; }
+  .hide { display:none; }
   .login-wrap { min-height:100vh; display:grid; place-items:center; padding:18px; }
   .login-card { width:min(460px, 100%); border:1px solid #000; border-radius:24px; padding:32px; }
   .login-card h1 { margin:0 0 12px; font-family:Georgia, "Times New Roman", serif; font-size:clamp(3rem, 10vw, 4.8rem); line-height:.9; letter-spacing:-.08em; font-weight:400; }
@@ -464,14 +480,14 @@ def render_knowledge_center_html() -> str:
   .status { min-height:1.2rem; font:.84rem/1.4 Arial, Helvetica, sans-serif; }
   .status.error { color:#000; font-weight:700; }
   .empty { border:1px dashed var(--line); border-radius:14px; padding:16px; }
-  @media (max-width: 1180px) { .workspace { grid-template-columns:1fr; } .entry-list { max-height:none; } .textarea-body { min-height:34vh; } }
+  @media (max-width: 1180px) { .workspace { grid-template-columns:1fr; } .entry-list { max-height:none; } .textarea-body { min-height:34vh; } .split { grid-template-columns:1fr; } }
   @media (max-width: 720px) { .topbar { flex-direction:column; } .page { width:min(100vw - 12px, 100%); } }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <script>
-  const state = { isAuthed:false, entries:[], activeEntry:null, selectedSlug:null, filters:{ query:"", status:"", type:"" }, statusMessage:"", statusError:false, testResults:[], testQuery:"", testIntent:"", testAudience:"" };
+  const state = { isAuthed:false, entries:[], activeEntry:null, selectedSlug:null, filters:{ query:"", status:"", type:"" }, statusMessage:"", statusError:false, testResults:[], testQuery:"", testIntent:"", testAudience:"", activePane:"write" };
   function esc(value) { return String(value || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
   function setStatus(message, isError=false) {
     state.statusMessage = message || "";
@@ -566,9 +582,16 @@ def render_knowledge_center_html() -> str:
       newButton.addEventListener("click", () => {
         state.selectedSlug = null;
         state.activeEntry = { slug:"", title:"", type:"fact", summary:"", body:"", tags:[], intent_tags:[], audience_tags:[], priority:0.5, status:"draft", source_url:"" };
+        state.activePane = "write";
         render();
       });
     }
+    document.querySelectorAll("[data-pane]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.activePane = button.getAttribute("data-pane");
+        render();
+      });
+    });
     const refreshButton = document.getElementById("refresh-btn");
     if (refreshButton) refreshButton.addEventListener("click", async () => {
       try { setStatus("Refreshing..."); await loadEntries(state.selectedSlug); setStatus("Library refreshed."); }
@@ -605,6 +628,7 @@ def render_knowledge_center_html() -> str:
         const saved = await api("/knowledge-center/api/import-url", { method:"POST", body:JSON.stringify(payload) });
         event.currentTarget.reset();
         await loadEntries(saved.slug);
+        state.activePane = "write";
         setStatus(`Imported ${saved.title}.`);
       } catch (error) {
         setStatus(error.message, true);
@@ -658,6 +682,7 @@ def render_knowledge_center_html() -> str:
         <div class="pill-row"><span class="pill">${esc(entry.type)}</span><span class="pill">${esc(entry.status)}</span></div>
         <h3>${esc(entry.title)}</h3>
         <p>${esc(entry.summary || "No summary yet.")}</p>
+        <div class="entry-meta">${esc((entry.tags || []).slice(0, 3).join(" • ") || "untagged")}</div>
       </button>`).join("");
     const pills = (values) => values && values.length ? values.map((value) => `<span class="pill">${esc(value)}</span>`).join("") : '<span class="mini">None</span>';
     const testCards = (state.testResults || []).map((item) => `
@@ -693,10 +718,30 @@ def render_knowledge_center_html() -> str:
               <div class="entry-list">${cards || '<div class="empty">No entries match the current filter.</div>'}</div>
             </div>
           </aside>
-          <section class="panel">
-            <div class="panel-head"><h2>Editor</h2><div class="mini">${esc(active.slug || "new record")}</div></div>
-            <div class="panel-body">
-              <form id="entry-form" class="stack">
+          <section class="workspace-main">
+            <div class="guide">
+              <strong>Simple flow</strong>
+              <p>Pick an entry from the library to edit it. Use <em>New entry</em> to write from scratch. If content lives on a webpage, use <em>Import</em> first, then return to <em>Write</em> to clean it up.</p>
+            </div>
+            <section class="panel">
+              <div class="panel-head">
+                <h2>Workspace</h2>
+                <div class="mode-switch">
+                  <button type="button" data-pane="write" class="${state.activePane === "write" ? "active" : ""}">Write</button>
+                  <button type="button" data-pane="import" class="${state.activePane === "import" ? "active" : ""}">Import</button>
+                  <button type="button" data-pane="test" class="${state.activePane === "test" ? "active" : ""}">Test</button>
+                </div>
+              </div>
+              <div class="panel-body">
+                <section class="${state.activePane === "write" ? "" : "hide"} stack">
+                  <div class="section-title">
+                    <div>
+                      <h3>${esc(active.title || "New entry")}</h3>
+                      <p>${active.slug ? `Editing ${esc(active.slug)}` : "Create a structured knowledge entry"}</p>
+                    </div>
+                  </div>
+                  <div class="split">
+                    <form id="entry-form" class="stack">
                 <input type="hidden" name="slug" value="${esc(active.slug)}">
                 <div class="form-grid">
                   <div class="field"><label>Title</label><input name="title" value="${esc(active.title)}" required></div>
@@ -715,13 +760,23 @@ def render_knowledge_center_html() -> str:
                 </div>
                 <div class="field"><label>Body</label><textarea class="textarea-body" name="body" required>${esc(active.body)}</textarea></div>
                 <div class="top-actions"><button type="submit">Save entry</button><div class="status" data-status></div></div>
-              </form>
-            </div>
-          </section>
-          <aside class="panel">
-            <div class="panel-head"><h2>Import + Preview</h2><div class="mini">responsive</div></div>
-            <div class="panel-body stack">
-              <form id="import-form" class="stack">
+                    </form>
+                    <div class="stack">
+                      <div class="detail-card"><h4>Summary</h4><p>${esc(active.summary || "Write a short summary so this entry is easy to scan in the library.")}</p></div>
+                      <div class="detail-card"><h4>Tags</h4><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
+                      <div class="detail-card"><h4>Intent + Audience</h4><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
+                      <div class="detail-card"><h4>Preview</h4><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
+                    </div>
+                  </div>
+                </section>
+                <section class="${state.activePane === "import" ? "" : "hide"} stack">
+                  <div class="section-title">
+                    <div>
+                      <h3>Import from a website</h3>
+                      <p>Use this when you want to pull source material into Convex first, then refine it as an entry.</p>
+                    </div>
+                  </div>
+                  <form id="import-form" class="stack">
                 <div class="field"><label>Import URL</label><input name="url" placeholder="https://example.com/page" required></div>
                 <div class="field"><label>Entry Title</label><input name="title" placeholder="Optional override"></div>
                 <div class="field"><label>Summary</label><textarea name="summary" placeholder="Short editorial note"></textarea></div>
@@ -736,13 +791,16 @@ def render_knowledge_center_html() -> str:
                 <div class="field"><label>Cookie Header</label><textarea name="cookie_header" placeholder="Optional"></textarea></div>
                 <div class="field"><label>Authorization Header</label><textarea name="auth_header" placeholder="Optional"></textarea></div>
                 <button type="submit" class="secondary">Import source</button>
-              </form>
-              <div class="preview-block"><h3>Entry</h3>${state.activeEntry ? `<div class="stack"><strong>${esc(state.activeEntry.title)}</strong><div class="pill-row"><span class="pill">${esc(state.activeEntry.type)}</span><span class="pill">${esc(state.activeEntry.status)}</span><span class="pill">priority ${esc(state.activeEntry.priority)}</span></div><div class="mini">Updated ${esc(state.activeEntry.updated_at || "unknown")}</div>${state.activeEntry.source_url ? `<div class="mini">${esc(state.activeEntry.source_url)}</div>` : ""}</div>` : '<div class="empty">Open an entry or create a new one.</div>'}</div>
-              <div class="preview-block"><h3>Tags</h3><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
-              <div class="preview-block"><h3>Intent</h3><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div></div>
-              <div class="preview-block"><h3>Audience</h3><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
-              <div class="preview-block"><h3>Body Preview</h3><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
-              <form id="test-form" class="stack">
+                  </form>
+                </section>
+                <section class="${state.activePane === "test" ? "" : "hide"} stack">
+                  <div class="section-title">
+                    <div>
+                      <h3>Retrieval test</h3>
+                      <p>Run a query and inspect exactly which entries the agent would use.</p>
+                    </div>
+                  </div>
+                  <form id="test-form" class="stack">
                 <div class="field"><label>Retrieval Test Query</label><input name="query" value="${esc(state.testQuery)}" placeholder="How does membership work?" required></div>
                 <div class="form-grid">
                   <div class="field"><label>Intent</label><input name="intent" value="${esc(state.testIntent)}" placeholder="membership"></div>
@@ -751,8 +809,10 @@ def render_knowledge_center_html() -> str:
                 <button type="submit" class="secondary">Test retrieval</button>
               </form>
               ${testCards || '<div class="preview-block"><h3>Retrieval Results</h3><div class="empty">Run a retrieval test to see which Convex entries the agent would pull first.</div></div>'}
-            </div>
-          </aside>
+                </section>
+              </div>
+            </section>
+          </section>
         </section>
       </div>`;
     bindShellEvents();
