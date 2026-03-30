@@ -484,8 +484,15 @@ def render_knowledge_center_html() -> str:
   async function api(path, options={}) {
     const response = await fetch(path, { credentials:"same-origin", headers:{ "Content-Type":"application/json", ...(options.headers || {}) }, ...options });
     const text = await response.text();
-    const payload = text ? JSON.parse(text) : {};
-    if (!response.ok) throw new Error(payload && payload.detail ? payload.detail : "Request failed");
+    let payload = {};
+    if (text) {
+      try {
+        payload = JSON.parse(text);
+      } catch (_error) {
+        payload = { detail: text };
+      }
+    }
+    if (!response.ok) throw new Error(payload && payload.detail ? payload.detail : text || "Request failed");
     return payload;
   }
   function entryToForm(entry) {
