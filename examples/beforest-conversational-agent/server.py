@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from agent import generate_reply_bundle
+from tools import get_knowledge_source_status
 
 app = FastAPI(title="Beforest DM Agent", version="0.1.0")
 
@@ -34,6 +35,12 @@ class ReplyResponse(BaseModel):
 def health() -> dict[str, bool]:
     """Basic health check."""
     return {"ok": True}
+
+
+@app.get("/health/knowledge")
+def knowledge_health() -> dict[str, object]:
+    """Knowledge source diagnostics without exposing secrets."""
+    return get_knowledge_source_status()
 
 
 @app.post("/reply", response_model=ReplyResponse)

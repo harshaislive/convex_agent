@@ -45,14 +45,39 @@ def _strip_html_tags(text: str) -> str:
     return _OUTLINE_TAG_RE.sub("", text)
 
 
+def _knowledge_debug_enabled() -> bool:
+    return os.getenv("DEBUG_KNOWLEDGE_ERRORS", "").strip().lower() == "true"
+
+
+def _log_knowledge_error(message: str) -> None:
+    if _knowledge_debug_enabled():
+        print(f"[knowledge] {message}", flush=True)
+
+
 def _get_outline_api_base() -> str | None:
     """Return the Outline API base URL when configured."""
-    base = os.getenv("OUTLINE_API_URL", "").strip() or os.getenv(
-        "OUTLINE_BASE_URL", ""
-    ).strip()
+    base = (
+        os.getenv("OUTLINE_API_URL", "").strip()
+        or os.getenv("OUTLINE_BASE_URL", "").strip()
+        or os.getenv("OUTLINE_URL", "").strip()
+    )
     if not base:
         return None
     return base.rstrip("/") + "/api"
+
+
+def _get_outline_token() -> str:
+    return (
+        os.getenv("OUTLINE_API_TOKEN", "").strip()
+        or os.getenv("OUTLINE_TOKEN", "").strip()
+        or os.getenv("OUTLINE_API_KEY", "").strip()
+    )
+
+
+def _get_outline_collection_id() -> str:
+    return os.getenv("OUTLINE_COLLECTION_ID", "").strip() or os.getenv(
+        "OUTLINE_COLLECTION", ""
+    ).strip()
 
 
 def _load_outline_knowledge_results(
@@ -62,12 +87,13 @@ def _load_outline_knowledge_results(
 ) -> list[dict[str, str | int]]:
     """Search Outline documents and return grounded snippets."""
     api_base = _get_outline_api_base()
-    token = os.getenv("OUTLINE_API_TOKEN", "").strip()
+    token = _get_outline_token()
     if not api_base or not token:
+        _log_knowledge_error("Outline search skipped because URL or token is missing.")
         return []
 
     payload = {"query": query, "limit": max_results}
-    collection_id = os.getenv("OUTLINE_COLLECTION_ID", "").strip()
+    collection_id = _get_outline_collection_id()
     if collection_id:
         payload["collectionId"] = collection_id
 
@@ -84,16 +110,28 @@ def _load_outline_knowledge_results(
     try:
         with urlopen(request, timeout=10) as response:  # noqa: S310
             raw = response.read().decode("utf-8", errors="replace")
-    except (HTTPError, OSError):
+    except HTTPError as exc:
+        try:
+            error_body = exc.read().decode("utf-8", errors="replace")
+        except OSError:
+            error_body = exc.reason if hasattr(exc, "reason") else ""
+        _log_knowledge_error(
+            f"Outline search failed with HTTP {exc.code}: {error_body or exc.reason}"
+        )
+        return []
+    except OSError as exc:
+        _log_knowledge_error(f"Outline search failed with network error: {exc}")
         return []
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
+        _log_knowledge_error(f"Outline search returned non-JSON: {raw[:400]}")
         return []
 
     items = parsed.get("data", [])
     if not isinstance(items, list):
+        _log_knowledge_error(f"Outline search returned unexpected payload: {raw[:400]}")
         return []
 
     results: list[dict[str, str | int]] = []
@@ -123,6 +161,35 @@ def _load_outline_knowledge_results(
         )
 
     return results
+
+
+def get_knowledge_source_status() -> dict[str, object]:
+    """Return non-secret knowledge source diagnostics for deployment checks."""
+    outline_api_base = _get_outline_api_base()
+    outline_token = _get_outline_token()
+    collection_id = _get_outline_collection_id()
+    status: dict[str, object] = {
+        "outlineConfigured": bool(outline_api_base and outline_token),
+        "outlineApiBase": outline_api_base or "",
+        "outlineCollectionId": collection_id or "",
+        "convexConfigured": bool(_get_convex_base() and os.getenv("AGENT_SHARED_SECRET", "").strip()),
+    }
+
+    if not outline_api_base or not outline_token:
+        status["outlineReachable"] = False
+        status["outlineResultCount"] = 0
+        status["outlineError"] = "Missing Outline URL or token."
+        return status
+
+    probe_results = _load_outline_knowledge_results("Beforest", max_results=3)
+    status["outlineReachable"] = True
+    status["outlineResultCount"] = len(probe_results)
+    status["outlineTopSources"] = [
+        str(item.get("source", "")) for item in probe_results[:3]
+    ]
+    if not probe_results:
+        status["outlineWarning"] = "Outline is configured but returned no search results."
+    return status
 
 
 def _get_convex_base() -> str | None:

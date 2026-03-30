@@ -26,6 +26,15 @@ OUTLINE_API_URL=https://beforestrepo.devsharsha.live
 OUTLINE_API_TOKEN=your_outline_api_token
 ```
 
+Also accepted:
+
+```bash
+OUTLINE_URL=...
+OUTLINE_BASE_URL=...
+OUTLINE_TOKEN=...
+OUTLINE_API_KEY=...
+```
+
 If you want to limit retrieval to a single collection, also set:
 
 ```bash
@@ -61,6 +70,18 @@ To run it as an HTTP service:
 
 ```bash
 uv run uvicorn server:app --host 0.0.0.0 --port 8000
+```
+
+To verify the deployed knowledge connection:
+
+```bash
+curl http://localhost:8000/health/knowledge
+```
+
+If you need retrieval error details in logs, set:
+
+```bash
+DEBUG_KNOWLEDGE_ERRORS=true
 ```
 
 Then send requests like:
