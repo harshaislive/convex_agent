@@ -84,6 +84,12 @@ If you need retrieval error details in logs, set:
 DEBUG_KNOWLEDGE_ERRORS=true
 ```
 
+If you want to trace each knowledge tool call and the sources returned, set:
+
+```bash
+TRACE_KNOWLEDGE_CALLS=true
+```
+
 Then send requests like:
 
 ```bash

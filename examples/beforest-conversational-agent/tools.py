@@ -54,6 +54,15 @@ def _log_knowledge_error(message: str) -> None:
         print(f"[knowledge] {message}", flush=True)
 
 
+def _knowledge_trace_enabled() -> bool:
+    return os.getenv("TRACE_KNOWLEDGE_CALLS", "").strip().lower() == "true"
+
+
+def _log_knowledge_trace(message: str) -> None:
+    if _knowledge_trace_enabled():
+        print(f"[knowledge-trace] {message}", flush=True)
+
+
 def _get_outline_api_base() -> str | None:
     """Return the Outline API base URL when configured."""
     base = (
@@ -499,14 +508,23 @@ def search_beforest_knowledge(
     Returns:
         Matching knowledge snippets ordered by relevance.
     """
+    _log_knowledge_trace(
+        f"search_beforest_knowledge query={query!r} max_results={max_results} intent={intent!r} audience={audience!r}"
+    )
+
     outline_results = _load_outline_knowledge_results(
         query,
         max_results=max_results,
     )
     if outline_results:
+        _log_knowledge_trace(
+            "Outline results: "
+            + ", ".join(str(item.get("source", "")) for item in outline_results[:5])
+        )
         return outline_results[:max_results]
 
     if _get_outline_api_base() and os.getenv("OUTLINE_API_TOKEN", "").strip():
+        _log_knowledge_trace("Outline configured but returned no results.")
         return []
 
     convex_results = _load_convex_knowledge_results(
@@ -516,6 +534,10 @@ def search_beforest_knowledge(
         audience=audience,
     )
     if convex_results:
+        _log_knowledge_trace(
+            "Convex fallback results: "
+            + ", ".join(str(item.get("source", "")) for item in convex_results[:5])
+        )
         return convex_results[:max_results]
 
     results: list[dict[str, str | int]] = []
@@ -547,6 +569,13 @@ def search_beforest_knowledge(
             )
 
     results.sort(key=lambda item: int(item["score"]), reverse=True)
+    if results:
+        _log_knowledge_trace(
+            "Local fallback results: "
+            + ", ".join(str(item.get("source", "")) for item in results[:5])
+        )
+    else:
+        _log_knowledge_trace("No knowledge results found from any source.")
     return results[:max_results]
 
 
