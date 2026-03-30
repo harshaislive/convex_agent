@@ -27,6 +27,20 @@ class AgentState(MessagesState, total=False):
     remaining_steps: RemainingSteps
 
 
+def _sanitize_message_content(message: BaseMessage) -> BaseMessage:
+    """Azure-compatible normalization for empty message content."""
+    content = message.content
+    if isinstance(content, str):
+        if content != "":
+            return message
+        return message.model_copy(update={"content": " "})
+
+    if len(content) > 0:
+        return message
+
+    return message.model_copy(update={"content": [{"type": "text", "text": " "}]})
+
+
 def _latest_human_message(messages: list[BaseMessage]) -> str:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
@@ -67,7 +81,7 @@ def wrap_model(model) -> RunnableSerializable[AgentState, AIMessage]:
         knowledge_message = _knowledge_context_message(question)
         if knowledge_message is not None:
             prompt_messages.append(knowledge_message)
-        prompt_messages.extend(messages)
+        prompt_messages.extend(_sanitize_message_content(message) for message in messages)
         return prompt_messages
 
     return RunnableLambda(_state_modifier, name="BeforestStateModifier") | bound_model  # type: ignore[return-value]
