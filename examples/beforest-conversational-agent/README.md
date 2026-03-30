@@ -5,7 +5,7 @@ A starter conversational agent for `Beforest.co` built on LangChain's `deepagent
 This example is designed for a practical Beforest use case instead of a generic demo:
 
 - answer common visitor questions about Beforest and its collectives
-- stay grounded in a local knowledge base
+- stay grounded in a Convex-backed knowledge base with local fallback
 - guide people to the right Beforest destination link when they want to act
 
 The bundled knowledge files are based on a snapshot of `https://beforest.co` reviewed on March 27, 2026. Subscription status, availability, pricing, and operating details can change, so the agent is instructed to guide people to the appropriate Beforest destination instead of guessing.
@@ -107,6 +107,22 @@ AGENT_SHARED_SECRET=replace_with_a_shared_secret
 
 This service will POST directly to the Convex HTTP action we just deployed and store records in `instagramConversations`.
 
+The same Convex deployment now also exposes protected knowledge routes:
+
+- `GET /knowledge/search`
+- `GET /knowledge/entries`
+- `POST /knowledge/upsert-entry`
+
+The Python retrieval tool uses these automatically when `CONVEX_HTTP_ACTION_URL` and `AGENT_SHARED_SECRET` are set.
+
+To seed the existing markdown knowledge into Convex:
+
+```bash
+uv run python sync_knowledge_to_convex.py
+```
+
+Run that from `examples/beforest-conversational-agent/` after deploying the updated Convex schema and functions.
+
 ## What This Example Includes
 
 ```text
@@ -130,9 +146,9 @@ beforest-conversational-agent/
 The example uses three layers:
 
 1. `AGENTS.md` defines the agent persona, guardrails, and routing rules.
-2. `knowledge/` stores Beforest-specific facts the agent can search and read.
+2. `knowledge/` stores local fallback files and seed content.
 3. `tools.py` adds:
-   - `search_beforest_knowledge` for quick retrieval
+   - `search_beforest_knowledge` for Convex-first retrieval with metadata-aware ranking
    - `search_beforest_experiences` for live lookups against `experiences.beforest.co`
    - `browse_beforest_page` for fetching a specific `beforest.co` or Beforest subdomain page on demand
 

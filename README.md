@@ -1,6 +1,6 @@
 # Beforest DM Agent
 
-This repo contains the Beforest Instagram DM agent, the FastAPI service, and the Convex functions used for DM event persistence.
+This repo contains the Beforest Instagram DM agent, the FastAPI service, and the Convex functions used for DM event persistence and knowledge retrieval.
 
 ## Coolify
 
@@ -38,3 +38,13 @@ Notes:
 - uploaded knowledge is stored under `examples/beforest-conversational-agent/knowledge_center/`
 - ingested docs are included in `search_beforest_knowledge`, so the DM agent can use them in replies
 - set `KNOWLEDGE_CENTER_PASSWORD` before using the UI
+
+## Convex Knowledge Layer
+
+The repo now includes Convex-backed knowledge storage and search:
+
+- `knowledge_entries` stores structured agent knowledge
+- `GET /knowledge/search` is the agent retrieval endpoint
+- `POST /knowledge/upsert-entry` is the write endpoint for sync/admin flows
+
+The example agent will use Convex knowledge first when `CONVEX_HTTP_ACTION_URL` and `AGENT_SHARED_SECRET` are configured, and fall back to local markdown files otherwise.

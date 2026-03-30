@@ -6,51 +6,35 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
-from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 
-EXAMPLE_DIR = Path(__file__).parent.resolve()
-KNOWLEDGE_DIR = EXAMPLE_DIR / "knowledge"
-KNOWLEDGE_CENTER_DIR = EXAMPLE_DIR / "knowledge_center"
-DOCS_DIR = KNOWLEDGE_CENTER_DIR / "docs"
-INDEX_PATH = KNOWLEDGE_CENTER_DIR / "index.json"
 DEFAULT_HTTP_TIMEOUT_SECONDS = 8.0
 SESSION_COOKIE_NAME = "knowledge_center_session"
 
 
 @dataclass(slots=True)
-class KnowledgeDocument:
+class KnowledgeEntry:
     slug: str
     title: str
-    content: str
-    source_type: str
+    entry_type: str
+    summary: str
+    body: str
     tags: list[str]
+    intent_tags: list[str]
+    audience_tags: list[str]
+    priority: float
+    status: str
+    source_type: str | None
     source_url: str | None
     updated_at: str
 
 
 class _MarkdownHTMLParser(HTMLParser):
-    """Extract readable markdown-ish content from a page."""
-
-    BLOCK_TAGS = {
-        "article",
-        "section",
-        "div",
-        "p",
-        "br",
-        "li",
-        "ul",
-        "ol",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "h5",
-        "h6",
-    }
+    BLOCK_TAGS = {"article", "section", "div", "p", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
 
     def __init__(self) -> None:
         super().__init__()
@@ -73,11 +57,10 @@ class _MarkdownHTMLParser(HTMLParser):
             self._href_stack.append(attr_map.get("href"))
         if tag in {"ul", "ol"}:
             self._list_depth += 1
-        if tag in {"li"}:
+        if tag == "li":
             self.parts.append("\n" + "  " * max(self._list_depth - 1, 0) + "- ")
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-            level = int(tag[1])
-            self.parts.append("\n\n" + "#" * level + " ")
+            self.parts.append("\n\n" + "#" * int(tag[1]) + " ")
         elif tag in self.BLOCK_TAGS:
             self.parts.append("\n")
 
@@ -114,54 +97,21 @@ def _now_iso() -> str:
 
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
-    return slug or f"doc-{hashlib.sha1(value.encode('utf-8')).hexdigest()[:8]}"
-
-
-def _ensure_dirs() -> None:
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    if not INDEX_PATH.exists():
-        INDEX_PATH.write_text("[]\n", encoding="utf-8")
-
-
-def _load_index() -> list[dict[str, Any]]:
-    _ensure_dirs()
-    return json.loads(INDEX_PATH.read_text(encoding="utf-8"))
-
-
-def _save_index(items: list[dict[str, Any]]) -> None:
-    _ensure_dirs()
-    INDEX_PATH.write_text(json.dumps(items, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
-
-
-def _doc_path(slug: str) -> Path:
-    return DOCS_DIR / f"{slug}.md"
-
-
-def _core_doc_slug(path: Path) -> str:
-    return f"core--{path.stem}"
-
-
-def _dedupe_slug(base_slug: str) -> str:
-    slug = base_slug
-    suffix = 2
-    while _doc_path(slug).exists():
-        slug = f"{base_slug}-{suffix}"
-        suffix += 1
-    return slug
+    return slug or f"entry-{hashlib.sha1(value.encode('utf-8')).hexdigest()[:8]}"
 
 
 def _normalize_tags(raw: str | None) -> list[str]:
     if not raw:
         return []
     seen: set[str] = set()
-    tags: list[str] = []
+    values: list[str] = []
     for part in raw.split(","):
-        tag = part.strip().lower()
-        if not tag or tag in seen:
+        cleaned = part.strip().lower()
+        if not cleaned or cleaned in seen:
             continue
-        seen.add(tag)
-        tags.append(tag)
-    return tags
+        seen.add(cleaned)
+        values.append(cleaned)
+    return values
 
 
 def _extract_markdown_from_html(html: str) -> tuple[str, str]:
@@ -181,16 +131,12 @@ def _fetch_url_content(
     cookie_header: str | None = None,
     auth_header: str | None = None,
 ) -> tuple[str, str]:
-    headers = {
-        "User-Agent": "BeforestKnowledgeCenter/1.0 (+https://beforest.co)",
-    }
+    headers = {"User-Agent": "BeforestKnowledgeCenter/2.0 (+https://beforest.co)"}
     if cookie_header:
         headers["Cookie"] = cookie_header
     if auth_header:
         headers["Authorization"] = auth_header
-    timeout_seconds = float(
-        os.getenv("BEFOREST_HTTP_TIMEOUT_SECONDS", DEFAULT_HTTP_TIMEOUT_SECONDS)
-    )
+    timeout_seconds = float(os.getenv("BEFOREST_HTTP_TIMEOUT_SECONDS", DEFAULT_HTTP_TIMEOUT_SECONDS))
     request = Request(url, headers=headers, method="GET")
     try:
         with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
@@ -200,123 +146,10 @@ def _fetch_url_content(
         raise RuntimeError(f"Could not fetch {url}: HTTP {exc.code}") from exc
     except URLError as exc:
         raise RuntimeError(f"Could not fetch {url}: {exc.reason}") from exc
-
     title, markdown = _extract_markdown_from_html(html)
     if not markdown:
         raise RuntimeError("Fetched page but could not extract readable content.")
     return title, markdown
-
-
-def list_documents() -> list[dict[str, Any]]:
-    items = list(_load_index())
-    for path in KNOWLEDGE_DIR.glob("*.md"):
-        stat = path.stat()
-        items.append(
-            {
-                "slug": _core_doc_slug(path),
-                "title": path.stem.replace("_", " ").replace("-", " ").title(),
-                "source_type": "core",
-                "source_url": None,
-                "tags": ["built-in"],
-                "updated_at": datetime.fromtimestamp(
-                    stat.st_mtime, tz=timezone.utc
-                ).isoformat(),
-            }
-        )
-    return sorted(items, key=lambda item: item.get("updated_at", ""), reverse=True)
-
-
-def read_document(slug: str) -> KnowledgeDocument:
-    if slug.startswith("core--"):
-        name = slug.removeprefix("core--")
-        path = KNOWLEDGE_DIR / f"{name}.md"
-        if not path.exists():
-            raise FileNotFoundError(slug)
-        stat = path.stat()
-        return KnowledgeDocument(
-            slug=slug,
-            title=path.stem.replace("_", " ").replace("-", " ").title(),
-            content=path.read_text(encoding="utf-8"),
-            source_type="core",
-            tags=["built-in"],
-            source_url=None,
-            updated_at=datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-        )
-    for item in _load_index():
-        if item.get("slug") != slug:
-            continue
-        content = _doc_path(slug).read_text(encoding="utf-8")
-        return KnowledgeDocument(
-            slug=slug,
-            title=str(item.get("title", slug)),
-            content=content,
-            source_type=str(item.get("source_type", "markdown")),
-            tags=[str(tag) for tag in item.get("tags", [])],
-            source_url=item.get("source_url"),
-            updated_at=str(item.get("updated_at", "")),
-        )
-    raise FileNotFoundError(slug)
-
-
-def save_markdown_document(title: str, content: str, tags: str | None = None) -> dict[str, Any]:
-    _ensure_dirs()
-    normalized_title = title.strip() or "Untitled document"
-    normalized_content = content.strip()
-    if not normalized_content:
-        raise ValueError("Content is required.")
-    slug = _dedupe_slug(_slugify(normalized_title))
-    _doc_path(slug).write_text(normalized_content + "\n", encoding="utf-8")
-    record = {
-        "slug": slug,
-        "title": normalized_title,
-        "source_type": "markdown",
-        "source_url": None,
-        "tags": _normalize_tags(tags),
-        "updated_at": _now_iso(),
-    }
-    items = _load_index()
-    items.append(record)
-    _save_index(items)
-    return record
-
-
-def ingest_url_document(
-    url: str,
-    *,
-    title: str | None = None,
-    tags: str | None = None,
-    cookie_header: str | None = None,
-    auth_header: str | None = None,
-) -> dict[str, Any]:
-    _ensure_dirs()
-    fetched_title, markdown = _fetch_url_content(
-        url,
-        cookie_header=cookie_header,
-        auth_header=auth_header,
-    )
-    chosen_title = (title or fetched_title).strip() or fetched_title
-    slug = _dedupe_slug(_slugify(chosen_title))
-    frontmatter = [
-        "---",
-        f'title: "{chosen_title.replace("\"", "\\\"")}"',
-        f'source_url: "{url}"',
-        f'fetched_at: "{_now_iso()}"',
-        "---",
-        "",
-    ]
-    _doc_path(slug).write_text("\n".join(frontmatter) + markdown + "\n", encoding="utf-8")
-    record = {
-        "slug": slug,
-        "title": chosen_title,
-        "source_type": "url",
-        "source_url": url,
-        "tags": _normalize_tags(tags),
-        "updated_at": _now_iso(),
-    }
-    items = _load_index()
-    items.append(record)
-    _save_index(items)
-    return record
 
 
 def _knowledge_password() -> str:
@@ -327,19 +160,11 @@ def _knowledge_password() -> str:
 
 
 def _cookie_secret() -> str:
-    return (
-        os.getenv("KNOWLEDGE_CENTER_SESSION_SECRET", "").strip()
-        or os.getenv("AGENT_SHARED_SECRET", "").strip()
-        or "beforest-knowledge-center"
-    )
+    return os.getenv("KNOWLEDGE_CENTER_SESSION_SECRET", "").strip() or os.getenv("AGENT_SHARED_SECRET", "").strip() or "beforest-knowledge-center"
 
 
 def session_cookie_value() -> str:
-    return hmac.new(
-        _cookie_secret().encode("utf-8"),
-        _knowledge_password().encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    return hmac.new(_cookie_secret().encode("utf-8"), _knowledge_password().encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def verify_password(password: str) -> bool:
@@ -360,6 +185,230 @@ def is_authenticated(cookie_value: str | None) -> bool:
     return hmac.compare_digest(cookie_value, expected)
 
 
+def _get_convex_base() -> str:
+    direct = os.getenv("CONVEX_HTTP_ACTION_URL", "").strip()
+    if direct:
+        return direct.replace("/instagram/store-dm-event", "")
+    site_url = os.getenv("CONVEX_SITE_URL", "").strip()
+    if site_url:
+        return site_url.rstrip("/")
+    raise RuntimeError("CONVEX_HTTP_ACTION_URL or CONVEX_SITE_URL is required.")
+
+
+def _convex_secret() -> str:
+    secret = os.getenv("AGENT_SHARED_SECRET", "").strip()
+    if not secret:
+        raise RuntimeError("AGENT_SHARED_SECRET is required.")
+    return secret
+
+
+def _convex_request(path: str, *, method: str = "GET", payload: dict[str, Any] | None = None) -> Any:
+    request = Request(
+        _get_convex_base() + path,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        headers={"Content-Type": "application/json", "x-agent-secret": _convex_secret()},
+        method=method,
+    )
+    try:
+        with urlopen(request, timeout=15) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", errors="replace")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(detail or f"Convex request failed with HTTP {exc.code}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Could not reach Convex: {exc.reason}") from exc
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("Convex returned invalid JSON.") from exc
+
+
+def _entry_from_payload(item: dict[str, Any]) -> KnowledgeEntry:
+    updated_at = item.get("updatedAt")
+    iso = datetime.fromtimestamp(updated_at / 1000, tz=timezone.utc).isoformat() if isinstance(updated_at, (int, float)) else str(updated_at or "")
+    return KnowledgeEntry(
+        slug=str(item.get("slug", "")),
+        title=str(item.get("title", "")),
+        entry_type=str(item.get("type", "fact")),
+        summary=str(item.get("summary", "") or ""),
+        body=str(item.get("body", "") or ""),
+        tags=[str(value) for value in item.get("tags", [])],
+        intent_tags=[str(value) for value in item.get("intentTags", [])],
+        audience_tags=[str(value) for value in item.get("audienceTags", [])],
+        priority=float(item.get("priority", 0) or 0),
+        status=str(item.get("status", "draft")),
+        source_type=str(item.get("sourceType", "") or "") or None,
+        source_url=str(item.get("sourceUrl", "") or "") or None,
+        updated_at=iso,
+    )
+
+
+def list_entries(*, status: str | None = None, entry_type: str | None = None) -> list[dict[str, Any]]:
+    query: list[str] = []
+    if status:
+        query.append(f"status={quote(status, safe='')}")
+    if entry_type:
+        query.append(f"type={quote(entry_type, safe='')}")
+    suffix = f"?{'&'.join(query)}" if query else ""
+    payload = _convex_request(f"/knowledge/entries{suffix}")
+    if not isinstance(payload, list):
+        return []
+    entries = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        entry = _entry_from_payload(item)
+        entries.append({
+            "slug": entry.slug,
+            "title": entry.title,
+            "type": entry.entry_type,
+            "summary": entry.summary,
+            "tags": entry.tags,
+            "intent_tags": entry.intent_tags,
+            "audience_tags": entry.audience_tags,
+            "priority": entry.priority,
+            "status": entry.status,
+            "source_type": entry.source_type,
+            "source_url": entry.source_url,
+            "updated_at": entry.updated_at,
+        })
+    return entries
+
+
+def search_entries(
+    *,
+    query: str,
+    intent: str | None = None,
+    audience: str | None = None,
+    max_results: int = 5,
+) -> list[dict[str, Any]]:
+    params = [f"query={quote(query, safe='')}", f"maxResults={max(1, min(max_results, 10))}"]
+    if intent:
+        params.append(f"intent={quote(intent, safe='')}")
+    if audience:
+        params.append(f"audience={quote(audience, safe='')}")
+    payload = _convex_request(f"/knowledge/search?{'&'.join(params)}")
+    if not isinstance(payload, list):
+        return []
+    results: list[dict[str, Any]] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        entry = _entry_from_payload(item)
+        results.append(
+            {
+                "slug": entry.slug,
+                "title": entry.title,
+                "type": entry.entry_type,
+                "summary": entry.summary,
+                "tags": entry.tags,
+                "intent_tags": entry.intent_tags,
+                "audience_tags": entry.audience_tags,
+                "priority": entry.priority,
+                "status": entry.status,
+                "source_type": entry.source_type,
+                "source_url": entry.source_url,
+                "updated_at": entry.updated_at,
+                "score": int(item.get("score", 0) or 0),
+                "body": entry.body,
+            }
+        )
+    return results
+
+
+def read_entry(slug: str) -> KnowledgeEntry:
+    payload = _convex_request(f"/knowledge/entry?slug={quote(slug, safe='')}")
+    if not isinstance(payload, dict):
+        raise FileNotFoundError(slug)
+    return _entry_from_payload(payload)
+
+
+def save_entry(
+    *,
+    slug: str | None,
+    title: str,
+    entry_type: str,
+    summary: str,
+    body: str,
+    tags: str | None,
+    intent_tags: str | None,
+    audience_tags: str | None,
+    priority: float,
+    status: str,
+    source_type: str | None = None,
+    source_url: str | None = None,
+) -> dict[str, Any]:
+    normalized_title = title.strip() or "Untitled entry"
+    normalized_body = body.strip()
+    if not normalized_body:
+        raise ValueError("Body is required.")
+    payload = {
+        "slug": (slug or "").strip() or _slugify(normalized_title),
+        "title": normalized_title,
+        "type": entry_type.strip() or "fact",
+        "summary": summary.strip(),
+        "body": normalized_body,
+        "tags": _normalize_tags(tags),
+        "intentTags": _normalize_tags(intent_tags),
+        "audienceTags": _normalize_tags(audience_tags),
+        "priority": float(priority),
+        "status": status.strip() or "draft",
+        "sourceType": source_type.strip() if source_type else None,
+        "sourceUrl": source_url.strip() if source_url else None,
+    }
+    result = _convex_request("/knowledge/upsert-entry", method="POST", payload=payload)
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        raise RuntimeError("Convex did not confirm the save.")
+    saved = read_entry(str(result.get("slug", payload["slug"])))
+    return {
+        "slug": saved.slug,
+        "title": saved.title,
+        "type": saved.entry_type,
+        "summary": saved.summary,
+        "body": saved.body,
+        "tags": saved.tags,
+        "intent_tags": saved.intent_tags,
+        "audience_tags": saved.audience_tags,
+        "priority": saved.priority,
+        "status": saved.status,
+        "source_type": saved.source_type,
+        "source_url": saved.source_url,
+        "updated_at": saved.updated_at,
+    }
+
+
+def import_url_entry(
+    *,
+    url: str,
+    title: str | None = None,
+    summary: str | None = None,
+    entry_type: str = "fact",
+    tags: str | None = None,
+    intent_tags: str | None = None,
+    audience_tags: str | None = None,
+    priority: float = 0.5,
+    status: str = "draft",
+    cookie_header: str | None = None,
+    auth_header: str | None = None,
+) -> dict[str, Any]:
+    fetched_title, markdown = _fetch_url_content(url, cookie_header=cookie_header, auth_header=auth_header)
+    chosen_title = (title or fetched_title).strip() or fetched_title
+    return save_entry(
+        slug=None,
+        title=chosen_title,
+        entry_type=entry_type,
+        summary=summary or f"Imported snapshot from {url}",
+        body=markdown,
+        tags=tags,
+        intent_tags=intent_tags,
+        audience_tags=audience_tags,
+        priority=priority,
+        status=status,
+        source_type="url",
+        source_url=url,
+    )
+
+
 def render_knowledge_center_html() -> str:
     return """<!doctype html>
 <html lang="en">
@@ -368,754 +417,342 @@ def render_knowledge_center_html() -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Knowledge Center</title>
   <style>
-    :root {
-      --bg: #f2ede4;
-      --paper: #fffdf8;
-      --panel: rgba(255, 252, 246, 0.88);
-      --panel-strong: rgba(255, 252, 246, 0.96);
-      --ink: #171512;
-      --muted: #6c655a;
-      --line: rgba(64, 49, 30, 0.12);
-      --line-strong: rgba(22, 58, 44, 0.24);
-      --accent: #17372d;
-      --accent-2: #a56439;
-      --accent-soft: rgba(23, 55, 45, 0.08);
-      --danger: #a04632;
-      --shadow: 0 24px 80px rgba(24, 18, 10, 0.1);
-      --radius: 28px;
-    }
-    * { box-sizing: border-box; }
-    html, body { min-height: 100%; }
-    body {
-      margin: 0;
-      color: var(--ink);
-      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-      background:
-        radial-gradient(circle at top left, rgba(220, 229, 214, 0.8), transparent 28%),
-        radial-gradient(circle at top right, rgba(243, 212, 192, 0.55), transparent 30%),
-        linear-gradient(180deg, #f8f3eb 0%, var(--bg) 58%, #ebe3d8 100%);
-    }
-    button, input, textarea {
-      font: inherit;
-    }
-    .shell {
-      width: min(1380px, calc(100vw - 28px));
-      margin: 0 auto;
-      padding: 22px 0 30px;
-    }
-    .hero {
-      position: relative;
-      display: grid;
-      grid-template-columns: 1.3fr 0.9fr;
-      gap: 18px;
-      margin-bottom: 18px;
-    }
-    .hero-card, .hero-side {
-      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,251,245,0.72));
-      border: 1px solid rgba(255,255,255,0.7);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
-      border-radius: 32px;
-      padding: 26px;
-    }
-    .hero-card::after {
-      content: "";
-      position: absolute;
-      inset: auto 18px 18px auto;
-      width: 160px;
-      height: 160px;
-      background: radial-gradient(circle, rgba(165,100,57,0.18), transparent 68%);
-      pointer-events: none;
-      filter: blur(6px);
-    }
-    .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      padding: 9px 14px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.76);
-      border: 1px solid var(--line);
-      color: var(--muted);
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      font-size: 0.78rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-    .hero h1 {
-      margin: 14px 0 10px;
-      font-size: clamp(2.4rem, 6vw, 5rem);
-      line-height: 0.9;
-      letter-spacing: -0.06em;
-      font-weight: 600;
-    }
-    .hero p {
-      margin: 0;
-      max-width: 52rem;
-      color: var(--muted);
-      font-size: 1rem;
-      line-height: 1.6;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .hero-stats {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 12px;
-      margin-top: 22px;
-    }
-    .stat {
-      border-radius: 22px;
-      padding: 15px 16px;
-      background: rgba(255,255,255,0.62);
-      border: 1px solid var(--line);
-    }
-    .stat strong {
-      display: block;
-      font-size: 1.4rem;
-      line-height: 1;
-      letter-spacing: -0.04em;
-    }
-    .stat span {
-      display: block;
-      margin-top: 6px;
-      color: var(--muted);
-      font-size: 0.82rem;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-    }
-    .hero-side {
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      gap: 16px;
-      background:
-        linear-gradient(180deg, rgba(19,55,45,0.95), rgba(19,55,45,0.84)),
-        radial-gradient(circle at top right, rgba(255,255,255,0.14), transparent 34%);
-      color: #f5efe6;
-    }
-    .hero-side h2 {
-      margin: 0;
-      font-size: 1.5rem;
-      line-height: 1.05;
-      letter-spacing: -0.04em;
-    }
-    .hero-side p {
-      color: rgba(245,239,230,0.78);
-      font-size: 0.95rem;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    button {
-      appearance: none;
-      border: none;
-      border-radius: 999px;
-      padding: 11px 16px;
-      background: var(--accent);
-      color: #f8f5ef;
-      cursor: pointer;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      font-size: 0.94rem;
-      transition: transform 0.18s ease, opacity 0.18s ease, box-shadow 0.18s ease;
-      box-shadow: 0 8px 24px rgba(23,55,45,0.18);
-    }
-    button:hover {
-      transform: translateY(-1px);
-    }
-    button.secondary {
-      background: rgba(255,255,255,0.9);
-      color: var(--ink);
-      border: 1px solid var(--line);
-      box-shadow: none;
-    }
-    button.ghost {
-      background: rgba(255,255,255,0.12);
-      color: #f8f5ef;
-      border: 1px solid rgba(255,255,255,0.16);
-      box-shadow: none;
-    }
-    .workspace {
-      display: grid;
-      grid-template-columns: 320px minmax(0, 1.04fr) minmax(320px, 0.96fr);
-      gap: 18px;
-      align-items: start;
-    }
-    .panel {
-      background: var(--panel);
-      border: 1px solid rgba(255,255,255,0.72);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
-      overflow: hidden;
-    }
-    .panel-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
-      padding: 18px 20px 12px;
-      border-bottom: 1px solid rgba(64,49,30,0.06);
-    }
-    .panel-title {
-      margin: 0;
-      font-size: 0.78rem;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-      color: var(--muted);
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .panel-body {
-      padding: 18px 20px 20px;
-    }
-    .search {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.88);
-      padding: 12px 14px;
-      color: var(--ink);
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      margin-bottom: 14px;
-    }
-    .doc-list {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      max-height: calc(100vh - 320px);
-      overflow: auto;
-      padding-right: 4px;
-    }
-    .doc-item {
-      border-radius: 22px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.64);
-      padding: 14px 15px;
-      cursor: pointer;
-      transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease;
-    }
-    .doc-item:hover,
-    .doc-item.active {
-      transform: translateY(-1px);
-      background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(227,239,233,0.82));
-      border-color: var(--line-strong);
-    }
-    .doc-item h3 {
-      margin: 0 0 7px;
-      font-size: 1rem;
-      line-height: 1.22;
-      letter-spacing: -0.02em;
-    }
-    .doc-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 7px;
-      color: var(--muted);
-      font-size: 0.79rem;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      padding: 5px 9px;
-      border-radius: 999px;
-      background: rgba(23,55,45,0.08);
-      color: var(--accent);
-      font-size: 0.72rem;
-      letter-spacing: 0.02em;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      margin: 7px 6px 0 0;
-    }
-    .studio {
-      display: grid;
-      gap: 18px;
-    }
-    .form-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 14px;
-    }
-    .card-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 14px;
-    }
-    .mini-card {
-      border-radius: 24px;
-      border: 1px solid var(--line);
-      background: rgba(255,255,255,0.58);
-      padding: 16px;
-    }
-    .mini-card h3 {
-      margin: 0 0 6px;
-      font-size: 1.18rem;
-      line-height: 1.05;
-      letter-spacing: -0.03em;
-    }
-    .mini-card p {
-      margin: 0 0 14px;
-      color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.5;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    form {
-      display: grid;
-      gap: 10px;
-    }
-    label {
-      color: var(--muted);
-      font-size: 0.8rem;
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    input, textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      border-radius: 16px;
-      background: rgba(255,255,255,0.88);
-      padding: 12px 14px;
-      color: var(--ink);
-    }
-    textarea {
-      resize: vertical;
-      min-height: 148px;
-      line-height: 1.55;
-      font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
-    }
-    .hint {
-      color: var(--muted);
-      font-size: 0.78rem;
-      line-height: 1.45;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .status {
-      min-height: 1.3rem;
-      color: var(--muted);
-      font-size: 0.92rem;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .status.error { color: var(--danger); }
-    .preview-card {
-      background: var(--panel-strong);
-    }
-    .preview-meta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 8px;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-    .preview-title {
-      margin: 0;
-      font-size: 2rem;
-      line-height: 0.95;
-      letter-spacing: -0.05em;
-    }
-    .preview-source {
-      margin-top: 8px;
-      color: var(--muted);
-      font-size: 0.9rem;
-      line-height: 1.5;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    .preview {
-      margin-top: 18px;
-      min-height: calc(100vh - 360px);
-      border-radius: 26px;
-      border: 1px solid var(--line);
-      background:
-        linear-gradient(180deg, rgba(255,255,255,0.9), rgba(249,244,236,0.96));
-      padding: 24px;
-      overflow: auto;
-      white-space: pre-wrap;
-      line-height: 1.72;
-      font-size: 1.02rem;
-    }
-    .login-shell {
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }
-    .login-card {
-      width: min(520px, 100%);
-      padding: 30px;
-      border-radius: 34px;
-      background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(255,250,243,0.76));
-      border: 1px solid rgba(255,255,255,0.72);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(16px);
-    }
-    .login-card h1 {
-      margin: 14px 0 10px;
-      font-size: 3rem;
-      line-height: 0.92;
-      letter-spacing: -0.06em;
-    }
-    .login-card p {
-      margin: 0 0 18px;
-      color: var(--muted);
-      line-height: 1.6;
-      font-family: ui-sans-serif, system-ui, sans-serif;
-    }
-    @media (max-width: 1120px) {
-      .workspace {
-        grid-template-columns: 1fr;
-      }
-      .doc-list, .preview {
-        max-height: none;
-        min-height: 320px;
-      }
-      .preview {
-        min-height: 360px;
-      }
-    }
-    @media (max-width: 860px) {
-      .shell {
-        width: min(100vw - 18px, 100%);
-      }
-      .hero {
-        grid-template-columns: 1fr;
-      }
-      .hero-stats,
-      .card-grid {
-        grid-template-columns: 1fr;
-      }
-      .hero-card, .hero-side, .panel {
-        border-radius: 24px;
-      }
-      .preview-title {
-        font-size: 1.6rem;
-      }
-      .preview {
-        padding: 18px;
-        font-size: 0.98rem;
-      }
-    }
+  :root { --bg:#fff; --ink:#000; --muted:#686868; --line:#d7d7d7; --soft:#f3f3f3; --radius:16px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fff; color:#000; font-family:"Times New Roman", Times, serif; }
+  button, input, select, textarea { font:inherit; color:inherit; }
+  button { cursor:pointer; border:1px solid #000; border-radius:999px; background:#000; color:#fff; padding:10px 16px; }
+  button.secondary { background:#fff; color:#000; }
+  button.ghost { background:transparent; color:#000; border-radius:12px; }
+  input, select, textarea { width:100%; border:1px solid var(--line); border-radius:12px; padding:12px 14px; background:#fff; }
+  textarea { resize:vertical; min-height:140px; line-height:1.5; }
+  .page { width:min(1460px, calc(100vw - 20px)); margin:0 auto; padding:16px 0 28px; }
+  .topbar { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; padding:6px 0 20px; border-bottom:1px solid #000; margin-bottom:18px; }
+  .title-block h1 { margin:0; font-size:clamp(2.4rem, 5vw, 4.8rem); line-height:.92; letter-spacing:-.06em; font-weight:400; }
+  .title-block p { margin:8px 0 0; color:var(--muted); max-width:720px; }
+  .mini { font-size:.76rem; text-transform:uppercase; letter-spacing:.16em; font-family:Arial, Helvetica, sans-serif; color:var(--muted); }
+  .top-actions { display:flex; gap:10px; flex-wrap:wrap; }
+  .workspace { display:grid; grid-template-columns:310px minmax(0, 1.2fr) minmax(270px, .85fr); gap:16px; }
+  .panel { border:1px solid #000; border-radius:var(--radius); min-height:0; }
+  .panel-head { display:flex; justify-content:space-between; gap:10px; align-items:center; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .panel-head h2 { margin:0; font:700 .8rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
+  .panel-body { padding:16px; }
+  .stack { display:grid; gap:12px; }
+  .field { display:grid; gap:7px; }
+  .field label { font:.72rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
+  .form-grid { display:flex; gap:10px; flex-wrap:wrap; }
+  .form-grid > * { flex:1 1 170px; }
+  .entry-list { display:grid; gap:8px; max-height:calc(100vh - 280px); overflow:auto; }
+  .entry-card { width:100%; text-align:left; border:1px solid var(--line); border-radius:14px; padding:12px; background:#fff; color:#000; }
+  .entry-card.active { border-color:#000; background:var(--soft); }
+  .entry-card h3 { margin:0 0 6px; font-size:1rem; font-weight:400; }
+  .entry-card p { margin:0; color:var(--muted); font-size:.85rem; }
+  .pill-row { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+  .pill { border:1px solid var(--line); border-radius:999px; padding:4px 8px; font:.68rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.08em; }
+  .textarea-body { min-height:48vh; }
+  .preview-block { border:1px solid var(--line); border-radius:14px; padding:14px; background:var(--soft); }
+  .preview-block h3 { margin:0 0 10px; font:700 .78rem/1 Arial, Helvetica, sans-serif; text-transform:uppercase; letter-spacing:.14em; }
+  .preview-body { white-space:pre-wrap; line-height:1.58; max-height:40vh; overflow:auto; font-size:.94rem; }
+  .login-wrap { min-height:100vh; display:grid; place-items:center; padding:18px; }
+  .login-card { width:min(430px, 100%); border:1px solid #000; border-radius:20px; padding:28px; }
+  .login-card h1 { margin:0 0 10px; font-size:clamp(2.8rem, 9vw, 4.4rem); line-height:.9; letter-spacing:-.07em; font-weight:400; }
+  .login-card p, .status, .empty { color:var(--muted); }
+  .status { min-height:1.2rem; font:.84rem/1.4 Arial, Helvetica, sans-serif; }
+  .status.error { color:#000; font-weight:700; }
+  .empty { border:1px dashed var(--line); border-radius:14px; padding:16px; }
+  @media (max-width: 1180px) { .workspace { grid-template-columns:1fr; } .entry-list { max-height:none; } .textarea-body { min-height:34vh; } }
+  @media (max-width: 720px) { .topbar { flex-direction:column; } .page { width:min(100vw - 12px, 100%); } }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <script>
-    const state = {
-      docs: [],
-      selectedSlug: null,
-      activeDoc: null,
-      isAuthed: false,
-      filter: "",
+  const state = { isAuthed:false, entries:[], activeEntry:null, selectedSlug:null, filters:{ query:"", status:"", type:"" }, statusMessage:"", statusError:false, testResults:[], testQuery:"", testIntent:"", testAudience:"" };
+  function esc(value) { return String(value || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
+  function setStatus(message, isError=false) {
+    state.statusMessage = message || "";
+    state.statusError = isError;
+    document.querySelectorAll("[data-status]").forEach((node) => {
+      node.textContent = state.statusMessage;
+      node.className = "status" + (state.statusError ? " error" : "");
+    });
+  }
+  async function api(path, options={}) {
+    const response = await fetch(path, { credentials:"same-origin", headers:{ "Content-Type":"application/json", ...(options.headers || {}) }, ...options });
+    const text = await response.text();
+    const payload = text ? JSON.parse(text) : {};
+    if (!response.ok) throw new Error(payload && payload.detail ? payload.detail : "Request failed");
+    return payload;
+  }
+  function entryToForm(entry) {
+    return {
+      slug: entry?.slug || "",
+      title: entry?.title || "",
+      type: entry?.type || "fact",
+      summary: entry?.summary || "",
+      body: entry?.body || "",
+      tags: (entry?.tags || []).join(", "),
+      intent_tags: (entry?.intent_tags || []).join(", "),
+      audience_tags: (entry?.audience_tags || []).join(", "),
+      priority: String(entry?.priority ?? 0.5),
+      status: entry?.status || "draft",
+      source_url: entry?.source_url || "",
     };
-
-    function escapeHtml(value) {
-      return String(value || "")
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
-    }
-
-    function formatDate(value) {
-      if (!value) return "";
-      const date = new Date(value);
-      return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
-    }
-
-    function setStatus(message, isError = false) {
-      const el = document.querySelector("[data-status]");
-      if (!el) return;
-      el.textContent = message || "";
-      el.classList.toggle("error", Boolean(isError));
-    }
-
-    async function api(path, options = {}) {
-      const response = await fetch(path, {
-        credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          ...(options.headers || {}),
-        },
-        ...options,
-      });
-      if (response.status === 401) {
-        state.isAuthed = false;
-        state.activeDoc = null;
-        render();
-        throw new Error("Unauthorized");
-      }
-      const contentType = response.headers.get("content-type") || "";
-      const body = contentType.includes("application/json") ? await response.json() : await response.text();
-      if (!response.ok) {
-        const message = body && body.detail ? body.detail : response.statusText;
-        throw new Error(message);
-      }
-      return body;
-    }
-
-    function filteredDocs() {
-      const query = state.filter.trim().toLowerCase();
-      if (!query) return state.docs;
-      return state.docs.filter((doc) => {
-        const haystack = [
-          doc.title,
-          doc.source_type,
-          ...(doc.tags || []),
-        ].join(" ").toLowerCase();
-        return haystack.includes(query);
-      });
-    }
-
-    function renderLogin() {
-      document.getElementById("app").innerHTML = `
-        <div class="login-shell">
-          <div class="login-card">
-            <div class="eyebrow">Private workspace</div>
-            <h1>Knowledge<br>Center</h1>
-            <p>One place for markdown notes, imported reference pages, and grounded material your DM agent can actually search.</p>
-            <form id="login-form">
-              <label>Password</label>
-              <input type="password" name="password" autocomplete="current-password" required>
-              <button type="submit">Enter workspace</button>
-              <div class="status" data-status></div>
-            </form>
-          </div>
-        </div>`;
-      document.getElementById("login-form").addEventListener("submit", async (event) => {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
-        setStatus("Signing in...");
-        try {
-          await api("/knowledge-center/login", {
-            method: "POST",
-            body: JSON.stringify({ password: form.get("password") || "" }),
-          });
-          state.isAuthed = true;
-          await loadDocs();
-        } catch (error) {
-          setStatus(error.message, true);
-        }
-      });
-    }
-
-    function renderApp() {
-      const docs = filteredDocs();
-      const activeDoc = state.activeDoc;
-      const coreCount = state.docs.filter((doc) => doc.source_type === "core").length;
-      const importedCount = state.docs.filter((doc) => doc.source_type !== "core").length;
-      const docCards = docs.map((doc) => `
-        <div class="doc-item ${state.selectedSlug === doc.slug ? "active" : ""}" data-slug="${escapeHtml(doc.slug)}">
-          <h3>${escapeHtml(doc.title)}</h3>
-          <div class="doc-meta">
-            <span>${escapeHtml(doc.source_type)}</span>
-            <span>${escapeHtml(formatDate(doc.updated_at))}</span>
-          </div>
-          <div>${(doc.tags || []).map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("")}</div>
-        </div>`).join("");
-
-      document.getElementById("app").innerHTML = `
-        <div class="shell">
-          <section class="hero">
-            <div class="hero-card">
-              <div class="eyebrow">Knowledge workspace</div>
-              <h1>Library,<br>Studio,<br>Preview.</h1>
-              <p>Keep your agent grounded with built-in notes, fresh markdown, and extracted page snapshots. The workspace is private, touch-friendly, and fast enough to use from your phone without feeling like admin software.</p>
-              <div class="hero-stats">
-                <div class="stat"><strong>${state.docs.length}</strong><span>Total docs</span></div>
-                <div class="stat"><strong>${coreCount}</strong><span>Built-in</span></div>
-                <div class="stat"><strong>${importedCount}</strong><span>Imported</span></div>
-              </div>
-            </div>
-            <aside class="hero-side">
-              <div>
-                <h2>Import from notes or locked pages.</h2>
-                <p>Paste markdown directly, or ingest a page URL with optional cookies or bearer auth when your team needs material from protected systems.</p>
-              </div>
-              <div class="toolbar">
-                <button class="ghost" id="refresh-btn">Refresh</button>
-                <button class="ghost" id="logout-btn">Log out</button>
-              </div>
-            </aside>
-          </section>
-
-          <section class="workspace">
-            <div class="panel">
-              <div class="panel-header">
-                <p class="panel-title">Library</p>
-              </div>
-              <div class="panel-body">
-                <input class="search" id="doc-search" placeholder="Filter by title, type, or tag" value="${escapeHtml(state.filter)}">
-                <div class="doc-list">${docCards || '<div class="doc-item"><h3>No matching documents</h3><div class="doc-meta">Adjust the filter or add a new source.</div></div>'}</div>
-              </div>
-            </div>
-
-            <div class="studio">
-              <div class="panel">
-                <div class="panel-header">
-                  <p class="panel-title">Studio</p>
-                </div>
-                <div class="panel-body">
-                  <div class="card-grid">
-                    <div class="mini-card">
-                      <h3>Markdown drop</h3>
-                      <p>Useful for FAQs, internal notes, objections, and draft positioning material.</p>
-                      <form id="markdown-form">
-                        <label>Title</label>
-                        <input name="title" placeholder="Collectives FAQ">
-                        <label>Tags</label>
-                        <input name="tags" placeholder="collectives, faq, sales">
-                        <label>Markdown</label>
-                        <textarea name="content" placeholder="# Notes&#10;&#10;Paste markdown here."></textarea>
-                        <button type="submit">Save markdown</button>
-                      </form>
-                    </div>
-                    <div class="mini-card">
-                      <h3>URL ingest</h3>
-                      <p>Fetch a page once, extract readable markdown, and keep a stable snapshot for retrieval.</p>
-                      <form id="url-form">
-                        <label>Page URL</label>
-                        <input name="url" placeholder="https://example.com/private-page" required>
-                        <label>Title override</label>
-                        <input name="title" placeholder="Optional">
-                        <label>Tags</label>
-                        <input name="tags" placeholder="url, source">
-                        <label>Cookie header</label>
-                        <textarea name="cookie_header" placeholder="Optional. Example: sessionid=..."></textarea>
-                        <label>Authorization header</label>
-                        <textarea name="auth_header" placeholder="Optional. Example: Bearer ..."></textarea>
-                        <button type="submit">Ingest URL</button>
-                      </form>
-                    </div>
-                  </div>
-                  <div class="hint" style="margin-top:14px;">Imported pages are stored as markdown snapshots. The agent searches these alongside the built-in knowledge files.</div>
-                  <div class="status" data-status></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="panel preview-card">
-              <div class="panel-header">
-                <p class="panel-title">Preview</p>
-              </div>
-              <div class="panel-body">
-                <h2 class="preview-title">${escapeHtml(activeDoc && activeDoc.title ? activeDoc.title : "Select a document")}</h2>
-                <div class="preview-meta">
-                  ${activeDoc ? `<span>${escapeHtml(activeDoc.source_type || "")}</span>` : ""}
-                  ${activeDoc ? `<span>${escapeHtml(formatDate(activeDoc.updated_at || ""))}</span>` : ""}
-                  ${activeDoc && activeDoc.tags ? activeDoc.tags.map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`).join("") : ""}
-                </div>
-                ${activeDoc && activeDoc.source_url ? `<div class="preview-source">Source: ${escapeHtml(activeDoc.source_url)}</div>` : ""}
-                <div class="preview" id="preview">${escapeHtml(activeDoc && activeDoc.content ? activeDoc.content : "Pick a document from the library to preview its markdown here.")}</div>
-              </div>
-            </div>
-          </section>
-        </div>`;
-
-      document.querySelectorAll("[data-slug]").forEach((node) => {
-        node.addEventListener("click", () => loadDoc(node.getAttribute("data-slug")));
-      });
-      document.getElementById("refresh-btn").addEventListener("click", () => loadDocs(state.selectedSlug));
-      document.getElementById("logout-btn").addEventListener("click", logout);
-      document.getElementById("markdown-form").addEventListener("submit", submitMarkdown);
-      document.getElementById("url-form").addEventListener("submit", submitUrl);
-      document.getElementById("doc-search").addEventListener("input", (event) => {
-        state.filter = event.target.value || "";
-        renderApp();
-      });
-    }
-
-    async function submitMarkdown(event) {
+  }
+  function filteredEntries() {
+    const q = state.filters.query.trim().toLowerCase();
+    return state.entries.filter((entry) => {
+      if (state.filters.status && entry.status !== state.filters.status) return false;
+      if (state.filters.type && entry.type !== state.filters.type) return false;
+      if (!q) return true;
+      const haystack = [entry.title, entry.summary || "", (entry.tags || []).join(" "), (entry.intent_tags || []).join(" "), (entry.audience_tags || []).join(" ")].join(" ").toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+  async function loadEntries(preferredSlug=null) {
+    const entries = await api("/knowledge-center/api/entries");
+    state.entries = entries;
+    const slug = preferredSlug || state.selectedSlug || (entries[0] && entries[0].slug) || null;
+    if (slug) await loadEntry(slug);
+    else { state.selectedSlug = null; state.activeEntry = null; render(); }
+  }
+  async function loadEntry(slug) {
+    const entry = await api(`/knowledge-center/api/entries/${slug}`);
+    state.selectedSlug = slug;
+    state.activeEntry = entry;
+    render();
+  }
+  function bindLogin() {
+    document.getElementById("login-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
-      setStatus("Saving markdown...");
+      setStatus("Signing in...");
       try {
-        const result = await api("/knowledge-center/api/markdown", {
-          method: "POST",
-          body: JSON.stringify(Object.fromEntries(form.entries())),
-        });
-        setStatus(`Saved ${result.title}.`);
-        event.currentTarget.reset();
-        await loadDocs(result.slug);
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    }
-
-    async function submitUrl(event) {
-      event.preventDefault();
-      const form = new FormData(event.currentTarget);
-      setStatus("Fetching page and extracting markdown...");
-      try {
-        const result = await api("/knowledge-center/api/url", {
-          method: "POST",
-          body: JSON.stringify(Object.fromEntries(form.entries())),
-        });
-        setStatus(`Imported ${result.title}.`);
-        event.currentTarget.reset();
-        await loadDocs(result.slug);
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    }
-
-    async function loadDoc(slug) {
-      try {
-        const doc = await api(`/knowledge-center/api/documents/${slug}`);
-        state.selectedSlug = slug;
-        state.activeDoc = doc;
-        renderApp();
-      } catch (error) {
-        setStatus(error.message, true);
-      }
-    }
-
-    async function loadDocs(selectSlug = null) {
-      try {
-        const docs = await api("/knowledge-center/api/documents");
-        state.docs = docs;
-        state.selectedSlug = selectSlug || state.selectedSlug || (docs[0] && docs[0].slug) || null;
+        await api("/knowledge-center/login", { method:"POST", body:JSON.stringify({ password: form.get("password") || "" }) });
         state.isAuthed = true;
-        if (state.selectedSlug) {
-          try {
-            state.activeDoc = await api(`/knowledge-center/api/documents/${state.selectedSlug}`);
-          } catch (error) {
-            state.activeDoc = null;
-          }
-        } else {
-          state.activeDoc = null;
-        }
-        render();
+        setStatus("");
+        await loadEntries();
       } catch (error) {
         setStatus(error.message, true);
       }
+    });
+  }
+  function bindShellEvents() {
+    const query = document.getElementById("filter-query");
+    const status = document.getElementById("filter-status");
+    const type = document.getElementById("filter-type");
+    if (query) query.addEventListener("input", () => { state.filters.query = query.value; render(); });
+    if (status) status.addEventListener("change", () => { state.filters.status = status.value; render(); });
+    if (type) type.addEventListener("change", () => { state.filters.type = type.value; render(); });
+    document.querySelectorAll("[data-open-slug]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try { await loadEntry(button.getAttribute("data-open-slug")); }
+        catch (error) { setStatus(error.message, true); }
+      });
+    });
+    const newButton = document.getElementById("new-entry");
+    if (newButton) {
+      newButton.addEventListener("click", () => {
+        state.selectedSlug = null;
+        state.activeEntry = { slug:"", title:"", type:"fact", summary:"", body:"", tags:[], intent_tags:[], audience_tags:[], priority:0.5, status:"draft", source_url:"" };
+        render();
+      });
     }
-
-    async function logout() {
-      await api("/knowledge-center/logout", { method: "POST" });
-      state.isAuthed = false;
-      state.activeDoc = null;
-      render();
-    }
-
-    function render() {
-      if (!state.isAuthed) {
-        renderLogin();
-        return;
-      }
-      renderApp();
-    }
-
-    (async function init() {
+    const refreshButton = document.getElementById("refresh-btn");
+    if (refreshButton) refreshButton.addEventListener("click", async () => {
+      try { setStatus("Refreshing..."); await loadEntries(state.selectedSlug); setStatus("Library refreshed."); }
+      catch (error) { setStatus(error.message, true); }
+    });
+    const logoutButton = document.getElementById("logout-btn");
+    if (logoutButton) logoutButton.addEventListener("click", async () => {
+      await api("/knowledge-center/logout", { method:"POST" });
+      state.isAuthed = false; state.entries = []; state.activeEntry = null; state.selectedSlug = null; render();
+    });
+    const entryForm = document.getElementById("entry-form");
+    if (entryForm) entryForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const payload = Object.fromEntries(form.entries());
+      payload.priority = Number(payload.priority || "0");
       try {
-        await loadDocs();
+        setStatus("Saving entry...");
+        const saved = await api("/knowledge-center/api/entries", { method:"POST", body:JSON.stringify(payload) });
+        await loadEntries(saved.slug);
+        setStatus(`Saved ${saved.title}.`);
       } catch (error) {
-        renderLogin();
+        setStatus(error.message, true);
       }
-    })();
+    });
+    const importForm = document.getElementById("import-form");
+    if (importForm) importForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      const payload = Object.fromEntries(form.entries());
+      payload.priority = Number(payload.priority || "0.5");
+      try {
+        setStatus("Importing URL...");
+        const saved = await api("/knowledge-center/api/import-url", { method:"POST", body:JSON.stringify(payload) });
+        event.currentTarget.reset();
+        await loadEntries(saved.slug);
+        setStatus(`Imported ${saved.title}.`);
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+    const testForm = document.getElementById("test-form");
+    if (testForm) testForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      state.testQuery = String(form.get("query") || "");
+      state.testIntent = String(form.get("intent") || "");
+      state.testAudience = String(form.get("audience") || "");
+      try {
+        setStatus("Running retrieval test...");
+        state.testResults = await api("/knowledge-center/api/search", {
+          method:"POST",
+          body:JSON.stringify({
+            query: state.testQuery,
+            intent: state.testIntent,
+            audience: state.testAudience,
+          }),
+        });
+        render();
+        setStatus("Retrieval test complete.");
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    });
+  }
+  function renderLogin() {
+    document.getElementById("app").innerHTML = `
+      <div class="login-wrap">
+        <div class="login-card">
+          <div class="mini">private access</div>
+          <h1>Knowledge<br>Center</h1>
+          <p>Convex-backed editing for the agent knowledge base.</p>
+          <form id="login-form" class="stack">
+            <div class="field"><label>Password</label><input type="password" name="password" autocomplete="current-password" required></div>
+            <button type="submit">Enter workspace</button>
+            <div class="status" data-status></div>
+          </form>
+        </div>
+      </div>`;
+    bindLogin();
+  }
+  function renderWorkspace() {
+    const entries = filteredEntries();
+    const active = entryToForm(state.activeEntry);
+    const cards = entries.map((entry) => `
+      <button type="button" class="entry-card${entry.slug === state.selectedSlug ? " active" : ""}" data-open-slug="${esc(entry.slug)}">
+        <div class="pill-row"><span class="pill">${esc(entry.type)}</span><span class="pill">${esc(entry.status)}</span></div>
+        <h3>${esc(entry.title)}</h3>
+        <p>${esc(entry.summary || "No summary yet.")}</p>
+      </button>`).join("");
+    const pills = (values) => values && values.length ? values.map((value) => `<span class="pill">${esc(value)}</span>`).join("") : '<span class="mini">None</span>';
+    const testCards = (state.testResults || []).map((item) => `
+      <div class="preview-block">
+        <h3>${esc(item.title)} <span class="mini">score ${esc(item.score)}</span></h3>
+        <div class="pill-row"><span class="pill">${esc(item.type)}</span><span class="pill">${esc(item.status)}</span></div>
+        <div class="mini">${esc(item.summary || "No summary")}</div>
+        <div class="preview-body">${esc(item.body || "")}</div>
+      </div>`).join("");
+    document.getElementById("app").innerHTML = `
+      <div class="page">
+        <section class="topbar">
+          <div class="title-block">
+            <div class="mini">convex-backed editorial control</div>
+            <h1>Knowledge Center</h1>
+            <p>Black and white workspace for writing, importing, and revising the agent knowledge base.</p>
+          </div>
+          <div class="top-actions">
+            <button type="button" class="secondary" id="new-entry">New entry</button>
+            <button type="button" class="ghost" id="refresh-btn">Refresh</button>
+            <button type="button" class="ghost" id="logout-btn">Log out</button>
+          </div>
+        </section>
+        <section class="workspace">
+          <aside class="panel">
+            <div class="panel-head"><h2>Library</h2><div class="mini">${state.entries.length} total</div></div>
+            <div class="panel-body stack">
+              <input id="filter-query" placeholder="Search titles, tags, intents" value="${esc(state.filters.query)}">
+              <div class="form-grid">
+                <select id="filter-status"><option value="">All statuses</option><option value="approved"${state.filters.status === "approved" ? " selected" : ""}>Approved</option><option value="draft"${state.filters.status === "draft" ? " selected" : ""}>Draft</option><option value="archived"${state.filters.status === "archived" ? " selected" : ""}>Archived</option></select>
+                <select id="filter-type"><option value="">All types</option><option value="fact"${state.filters.type === "fact" ? " selected" : ""}>Fact</option><option value="faq"${state.filters.type === "faq" ? " selected" : ""}>FAQ</option><option value="offer"${state.filters.type === "offer" ? " selected" : ""}>Offer</option><option value="playbook"${state.filters.type === "playbook" ? " selected" : ""}>Playbook</option></select>
+              </div>
+              <div class="entry-list">${cards || '<div class="empty">No entries match the current filter.</div>'}</div>
+            </div>
+          </aside>
+          <section class="panel">
+            <div class="panel-head"><h2>Editor</h2><div class="mini">${esc(active.slug || "new record")}</div></div>
+            <div class="panel-body">
+              <form id="entry-form" class="stack">
+                <input type="hidden" name="slug" value="${esc(active.slug)}">
+                <div class="form-grid">
+                  <div class="field"><label>Title</label><input name="title" value="${esc(active.title)}" required></div>
+                  <div class="field"><label>Type</label><select name="type"><option value="fact"${active.type === "fact" ? " selected" : ""}>Fact</option><option value="faq"${active.type === "faq" ? " selected" : ""}>FAQ</option><option value="offer"${active.type === "offer" ? " selected" : ""}>Offer</option><option value="playbook"${active.type === "playbook" ? " selected" : ""}>Playbook</option></select></div>
+                </div>
+                <div class="form-grid">
+                  <div class="field"><label>Status</label><select name="status"><option value="draft"${active.status === "draft" ? " selected" : ""}>Draft</option><option value="approved"${active.status === "approved" ? " selected" : ""}>Approved</option><option value="archived"${active.status === "archived" ? " selected" : ""}>Archived</option></select></div>
+                  <div class="field"><label>Priority</label><input type="number" name="priority" min="0" max="1" step="0.1" value="${esc(active.priority)}"></div>
+                  <div class="field"><label>Source URL</label><input name="source_url" value="${esc(active.source_url)}" placeholder="Optional canonical source"></div>
+                </div>
+                <div class="field"><label>Summary</label><textarea name="summary">${esc(active.summary)}</textarea></div>
+                <div class="form-grid">
+                  <div class="field"><label>Tags</label><input name="tags" value="${esc(active.tags)}" placeholder="membership, pricing"></div>
+                  <div class="field"><label>Intent Tags</label><input name="intent_tags" value="${esc(active.intent_tags)}" placeholder="booking, objections"></div>
+                  <div class="field"><label>Audience Tags</label><input name="audience_tags" value="${esc(active.audience_tags)}" placeholder="prospect, member"></div>
+                </div>
+                <div class="field"><label>Body</label><textarea class="textarea-body" name="body" required>${esc(active.body)}</textarea></div>
+                <div class="top-actions"><button type="submit">Save entry</button><div class="status" data-status></div></div>
+              </form>
+            </div>
+          </section>
+          <aside class="panel">
+            <div class="panel-head"><h2>Import + Preview</h2><div class="mini">responsive</div></div>
+            <div class="panel-body stack">
+              <form id="import-form" class="stack">
+                <div class="field"><label>Import URL</label><input name="url" placeholder="https://example.com/page" required></div>
+                <div class="field"><label>Entry Title</label><input name="title" placeholder="Optional override"></div>
+                <div class="field"><label>Summary</label><textarea name="summary" placeholder="Short editorial note"></textarea></div>
+                <div class="form-grid">
+                  <div class="field"><label>Type</label><select name="type"><option value="fact">Fact</option><option value="faq">FAQ</option><option value="offer">Offer</option><option value="playbook">Playbook</option></select></div>
+                  <div class="field"><label>Status</label><select name="status"><option value="draft">Draft</option><option value="approved">Approved</option></select></div>
+                  <div class="field"><label>Priority</label><input type="number" name="priority" min="0" max="1" step="0.1" value="0.5"></div>
+                </div>
+                <div class="field"><label>Tags</label><input name="tags" placeholder="source, website"></div>
+                <div class="field"><label>Intent Tags</label><input name="intent_tags" placeholder="pricing, booking"></div>
+                <div class="field"><label>Audience Tags</label><input name="audience_tags" placeholder="prospect, member"></div>
+                <div class="field"><label>Cookie Header</label><textarea name="cookie_header" placeholder="Optional"></textarea></div>
+                <div class="field"><label>Authorization Header</label><textarea name="auth_header" placeholder="Optional"></textarea></div>
+                <button type="submit" class="secondary">Import source</button>
+              </form>
+              <div class="preview-block"><h3>Entry</h3>${state.activeEntry ? `<div class="stack"><strong>${esc(state.activeEntry.title)}</strong><div class="pill-row"><span class="pill">${esc(state.activeEntry.type)}</span><span class="pill">${esc(state.activeEntry.status)}</span><span class="pill">priority ${esc(state.activeEntry.priority)}</span></div><div class="mini">Updated ${esc(state.activeEntry.updated_at || "unknown")}</div>${state.activeEntry.source_url ? `<div class="mini">${esc(state.activeEntry.source_url)}</div>` : ""}</div>` : '<div class="empty">Open an entry or create a new one.</div>'}</div>
+              <div class="preview-block"><h3>Tags</h3><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
+              <div class="preview-block"><h3>Intent</h3><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div></div>
+              <div class="preview-block"><h3>Audience</h3><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
+              <div class="preview-block"><h3>Body Preview</h3><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
+              <form id="test-form" class="stack">
+                <div class="field"><label>Retrieval Test Query</label><input name="query" value="${esc(state.testQuery)}" placeholder="How does membership work?" required></div>
+                <div class="form-grid">
+                  <div class="field"><label>Intent</label><input name="intent" value="${esc(state.testIntent)}" placeholder="membership"></div>
+                  <div class="field"><label>Audience</label><input name="audience" value="${esc(state.testAudience)}" placeholder="prospect"></div>
+                </div>
+                <button type="submit" class="secondary">Test retrieval</button>
+              </form>
+              ${testCards || '<div class="preview-block"><h3>Retrieval Results</h3><div class="empty">Run a retrieval test to see which Convex entries the agent would pull first.</div></div>'}
+            </div>
+          </aside>
+        </section>
+      </div>`;
+    bindShellEvents();
+    setStatus(state.statusMessage, state.statusError);
+  }
+  function render() { if (!state.isAuthed) { renderLogin(); setStatus(state.statusMessage, state.statusError); return; } renderWorkspace(); }
+  (async function init() {
+    try { state.isAuthed = true; await loadEntries(); }
+    catch (_error) { state.isAuthed = false; render(); }
+  })();
   </script>
 </body>
 </html>"""
+"""

@@ -9,12 +9,13 @@ from pydantic import BaseModel, Field
 from agent import generate_reply_bundle
 from knowledge_center import (
     SESSION_COOKIE_NAME,
-    ingest_url_document,
+    import_url_entry,
     is_authenticated,
-    list_documents,
-    read_document,
+    list_entries,
+    read_entry,
     render_knowledge_center_html,
-    save_markdown_document,
+    search_entries,
+    save_entry,
     session_cookie_value,
     verify_password,
 )
@@ -45,18 +46,39 @@ class KnowledgeCenterLoginRequest(BaseModel):
     password: str = Field(min_length=1)
 
 
-class KnowledgeMarkdownRequest(BaseModel):
+class KnowledgeEntryRequest(BaseModel):
+    slug: str = ""
     title: str = ""
-    content: str = Field(min_length=1)
+    type: str = "fact"
+    summary: str = ""
+    body: str = Field(min_length=1)
     tags: str = ""
+    intent_tags: str = ""
+    audience_tags: str = ""
+    priority: float = 0.5
+    status: str = "draft"
+    source_url: str = ""
 
 
 class KnowledgeUrlRequest(BaseModel):
     url: str = Field(min_length=1)
     title: str = ""
+    summary: str = ""
+    type: str = "fact"
     tags: str = ""
+    intent_tags: str = ""
+    audience_tags: str = ""
+    priority: float = 0.5
+    status: str = "draft"
     cookie_header: str = ""
     auth_header: str = ""
+
+
+class KnowledgeSearchRequest(BaseModel):
+    query: str = Field(min_length=1)
+    intent: str = ""
+    audience: str = ""
+    max_results: int = 5
 
 
 def _require_knowledge_auth(request: Request) -> None:
@@ -104,7 +126,11 @@ def knowledge_center() -> str:
 
 
 @app.post("/knowledge-center/login")
-def knowledge_center_login(request: KnowledgeCenterLoginRequest, response: Response) -> dict[str, bool]:
+def knowledge_center_login(
+    request: KnowledgeCenterLoginRequest,
+    response: Response,
+    raw_request: Request,
+) -> dict[str, bool]:
     """Create a cookie-backed session for the knowledge center."""
     if not os.getenv("KNOWLEDGE_CENTER_PASSWORD", "").strip():
         raise HTTPException(
@@ -118,7 +144,7 @@ def knowledge_center_login(request: KnowledgeCenterLoginRequest, response: Respo
         value=session_cookie_value(),
         httponly=True,
         samesite="lax",
-        secure=True,
+        secure=raw_request.url.scheme == "https",
         max_age=60 * 60 * 12,
     )
     return {"ok": True}
@@ -131,59 +157,103 @@ def knowledge_center_logout(response: Response) -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.get("/knowledge-center/api/documents")
-def knowledge_center_documents(request: Request) -> list[dict[str, Any]]:
-    """List stored knowledge documents."""
+@app.get("/knowledge-center/api/entries")
+def knowledge_center_entries(request: Request) -> list[dict[str, Any]]:
+    """List structured knowledge entries."""
     _require_knowledge_auth(request)
-    return list_documents()
+    return list_entries()
 
 
-@app.get("/knowledge-center/api/documents/{slug}")
-def knowledge_center_document(slug: str, request: Request) -> dict[str, Any]:
-    """Return one document's metadata and markdown."""
+@app.get("/knowledge-center/api/entries/{slug}")
+def knowledge_center_entry(slug: str, request: Request) -> dict[str, Any]:
+    """Return one structured knowledge entry."""
     _require_knowledge_auth(request)
     try:
-        doc = read_document(slug)
+        entry = read_entry(slug)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Document not found") from exc
+        raise HTTPException(status_code=404, detail="Entry not found") from exc
     return {
-        "slug": doc.slug,
-        "title": doc.title,
-        "content": doc.content,
-        "source_type": doc.source_type,
-        "tags": doc.tags,
-        "source_url": doc.source_url,
-        "updated_at": doc.updated_at,
+        "slug": entry.slug,
+        "title": entry.title,
+        "type": entry.entry_type,
+        "summary": entry.summary,
+        "body": entry.body,
+        "tags": entry.tags,
+        "intent_tags": entry.intent_tags,
+        "audience_tags": entry.audience_tags,
+        "priority": entry.priority,
+        "status": entry.status,
+        "source_type": entry.source_type,
+        "source_url": entry.source_url,
+        "updated_at": entry.updated_at,
     }
 
 
-@app.post("/knowledge-center/api/markdown")
-def knowledge_center_markdown(
-    payload: KnowledgeMarkdownRequest,
+@app.post("/knowledge-center/api/entries")
+def knowledge_center_save_entry(
+    payload: KnowledgeEntryRequest,
     request: Request,
 ) -> dict[str, Any]:
-    """Store a markdown document in the knowledge center."""
+    """Create or update a structured knowledge entry."""
     _require_knowledge_auth(request)
     try:
-        return save_markdown_document(payload.title, payload.content, payload.tags)
+        return save_entry(
+            slug=payload.slug or None,
+            title=payload.title,
+            entry_type=payload.type,
+            summary=payload.summary,
+            body=payload.body,
+            tags=payload.tags,
+            intent_tags=payload.intent_tags,
+            audience_tags=payload.audience_tags,
+            priority=payload.priority,
+            status=payload.status,
+            source_url=payload.source_url or None,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
-@app.post("/knowledge-center/api/url")
-def knowledge_center_url(
+@app.post("/knowledge-center/api/import-url")
+def knowledge_center_import_url(
     payload: KnowledgeUrlRequest,
     request: Request,
 ) -> dict[str, Any]:
-    """Fetch a URL, extract markdown, and save it as a knowledge document."""
+    """Fetch a URL, extract markdown, and save it as a structured entry."""
     _require_knowledge_auth(request)
     try:
-        return ingest_url_document(
-            payload.url,
+        return import_url_entry(
+            url=payload.url,
             title=payload.title or None,
+            summary=payload.summary or None,
+            entry_type=payload.type,
             tags=payload.tags or None,
+            intent_tags=payload.intent_tags or None,
+            audience_tags=payload.audience_tags or None,
+            priority=payload.priority,
+            status=payload.status,
             cookie_header=payload.cookie_header or None,
             auth_header=payload.auth_header or None,
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/knowledge-center/api/search")
+def knowledge_center_search(
+    payload: KnowledgeSearchRequest,
+    request: Request,
+) -> list[dict[str, Any]]:
+    """Run a Convex-backed retrieval test for a draft query."""
+    _require_knowledge_auth(request)
+    try:
+        return search_entries(
+            query=payload.query,
+            intent=payload.intent or None,
+            audience=payload.audience or None,
+            max_results=payload.max_results,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

@@ -7,7 +7,7 @@ from email.message import EmailMessage
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 from langchain_core.tools import tool
@@ -36,6 +36,75 @@ def _score_text(query: str, text: str) -> int:
 def _normalize_text(text: str) -> str:
     """Collapse repeated whitespace for cleaner snippets."""
     return " ".join(text.split())
+
+
+def _get_convex_base() -> str | None:
+    """Derive the Convex deployment base URL from the configured DM event endpoint."""
+    url = os.getenv("CONVEX_HTTP_ACTION_URL", "").strip()
+    if url:
+        return url.replace("/instagram/store-dm-event", "")
+
+    site_url = os.getenv("CONVEX_SITE_URL", "").strip()
+    if site_url:
+        return site_url.rstrip("/")
+
+    return None
+
+
+def _load_convex_knowledge_results(
+    query: str,
+    *,
+    max_results: int,
+    intent: str = "",
+    audience: str = "",
+) -> list[dict[str, str | int]]:
+    """Search Convex-backed knowledge entries when configured."""
+    base = _get_convex_base()
+    secret = os.getenv("AGENT_SHARED_SECRET", "").strip()
+    if not base or not secret:
+        return []
+
+    encoded_query = quote(query, safe="")
+    url = f"{base}/knowledge/search?query={encoded_query}&maxResults={max_results}"
+    if intent.strip():
+        url += f"&intent={quote(intent.strip(), safe='')}"
+    if audience.strip():
+        url += f"&audience={quote(audience.strip(), safe='')}"
+
+    request = Request(
+        url,
+        headers={"x-agent-secret": secret},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310
+            raw = response.read().decode("utf-8", errors="replace")
+    except (HTTPError, OSError):
+        return []
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(parsed, list):
+        return []
+
+    results: list[dict[str, str | int]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        body = str(item.get("body", ""))
+        summary = str(item.get("summary", "") or "")
+        snippet_source = summary or body
+        results.append(
+            {
+                "source": str(item.get("title", "Untitled knowledge entry")),
+                "score": int(item.get("score", 0)),
+                "snippet": _build_snippet(snippet_source or body, query),
+            }
+        )
+    return results
 
 
 def _build_snippet(text: str, query: str, limit: int = 360) -> str:
@@ -259,16 +328,32 @@ def _smtp_env(name: str) -> str:
 
 
 @tool
-def search_beforest_knowledge(query: str, max_results: int = 3) -> list[dict[str, str | int]]:
-    """Search the local Beforest knowledge base for relevant passages.
+def search_beforest_knowledge(
+    query: str,
+    max_results: int = 3,
+    intent: str = "",
+    audience: str = "",
+) -> list[dict[str, str | int]]:
+    """Search Convex-backed Beforest knowledge, with local fallback.
 
     Args:
         query: Question or topic to search for.
         max_results: Maximum number of snippets to return.
+        intent: Optional intent hint like `pricing`, `booking`, or `collectives`.
+        audience: Optional audience hint like `member`, `prospect`, or `partner`.
 
     Returns:
         Matching knowledge snippets ordered by relevance.
     """
+    convex_results = _load_convex_knowledge_results(
+        query,
+        max_results=max_results,
+        intent=intent,
+        audience=audience,
+    )
+    if convex_results:
+        return convex_results[:max_results]
+
     results: list[dict[str, str | int]] = []
 
     for path in list(KNOWLEDGE_DIR.glob("*.md")) + list(KNOWLEDGE_CENTER_DOCS_DIR.glob("*.md")):

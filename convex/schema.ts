@@ -66,4 +66,42 @@ export default defineSchema({
     status: v.optional(v.string()),
     updatedAt: v.optional(v.float64()),
   }).index("by_contact_id", ["contactId"]),
+  knowledge_sources: defineTable({
+    sourceType: v.string(),
+    title: v.string(),
+    sourceUrl: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    status: v.string(),
+    rawContent: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    createdAt: v.float64(),
+    updatedAt: v.float64(),
+  })
+    .index("by_status", ["status"])
+    .index("by_source_type", ["sourceType"]),
+  knowledge_entries: defineTable({
+    slug: v.string(),
+    title: v.string(),
+    type: v.string(),
+    summary: v.optional(v.string()),
+    body: v.string(),
+    intentTags: v.array(v.string()),
+    audienceTags: v.array(v.string()),
+    tags: v.array(v.string()),
+    priority: v.float64(),
+    status: v.string(),
+    effectiveFrom: v.optional(v.float64()),
+    effectiveTo: v.optional(v.float64()),
+    sourceId: v.optional(v.id("knowledge_sources")),
+    sourceType: v.optional(v.string()),
+    sourceUrl: v.optional(v.string()),
+    owner: v.optional(v.string()),
+    searchText: v.string(),
+    createdAt: v.float64(),
+    updatedAt: v.float64(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_status", ["status"])
+    .index("by_type", ["type"])
+    .index("by_updated_at", ["updatedAt"]),
 });
