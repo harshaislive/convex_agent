@@ -4,6 +4,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.pregel import Pregel
 
 from agents.bg_task_agent.bg_task_agent import bg_task_agent
+from agents.beforest_agent import beforest_agent
 from agents.chatbot import chatbot
 from agents.command_agent import command_agent
 from agents.github_mcp_agent.github_mcp_agent import github_mcp_agent
@@ -16,7 +17,7 @@ from agents.rag_assistant import rag_assistant
 from agents.research_assistant import research_assistant
 from schema import AgentInfo
 
-DEFAULT_AGENT = "research-assistant"
+DEFAULT_AGENT = "beforest-agent"
 
 # Type alias to handle LangGraph's different agent patterns
 # - @entrypoint functions return Pregel
@@ -32,6 +33,10 @@ class Agent:
 
 
 agents: dict[str, Agent] = {
+    "beforest-agent": Agent(
+        description="A Beforest concierge agent grounded in Outline knowledge and live Beforest web tools.",
+        graph_like=beforest_agent,
+    ),
     "chatbot": Agent(description="A simple chatbot.", graph_like=chatbot),
     "research-assistant": Agent(
         description="A research assistant with web search and calculator.",

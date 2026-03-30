@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     GITHUB_PAT: SecretStr | None = None
     MCP_GITHUB_SERVER_URL: str = "https://api.githubcopilot.com/mcp/"
 
+    # Beforest / Outline / Convex
+    OUTLINE_API_URL: str | None = None
+    OUTLINE_API_TOKEN: SecretStr | None = None
+    OUTLINE_COLLECTION_ID: str | None = None
+    OUTLINE_CACHE_TTL_SECONDS: int = 300
+    CONVEX_HTTP_ACTION_URL: str | None = None
+    CONVEX_SITE_URL: str | None = None
+    AGENT_SHARED_SECRET: SecretStr | None = None
+    TRACE_KNOWLEDGE_CALLS: bool = False
+
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"
     LANGCHAIN_ENDPOINT: Annotated[str, BeforeValidator(check_str_is_http)] = (

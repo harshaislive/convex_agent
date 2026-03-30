@@ -4,13 +4,16 @@ import logging
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -23,6 +26,7 @@ from langsmith import Client as LangsmithClient
 from langsmith import uuid7
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
+from agents.beforest_tools import get_knowledge_source_status
 from core import settings
 from memory import initialize_database, initialize_store
 from schema import (
@@ -104,6 +108,86 @@ app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_uni
 router = APIRouter(dependencies=[Depends(verify_bearer)])
 
 
+class BeforestReplyRequest(BaseModel):
+    message: str = Field(min_length=1)
+    user_id: str | None = None
+    thread_id: str | None = None
+    subscriber_data: dict[str, Any] = Field(default_factory=dict)
+    manychat_subscriber_id: str | None = None
+
+
+class BeforestReplyResponse(BaseModel):
+    ok: bool
+    reply: str
+    thread_id: str
+
+
+def _convex_history_url() -> str | None:
+    if settings.CONVEX_HTTP_ACTION_URL:
+        return str(settings.CONVEX_HTTP_ACTION_URL).rstrip("/")
+    if settings.CONVEX_SITE_URL:
+        return str(settings.CONVEX_SITE_URL).rstrip("/") + "/instagram/store-dm-event"
+    return None
+
+
+async def _save_beforest_event_to_convex(
+    *,
+    user_id: str | None,
+    thread_id: str,
+    subscriber_data: dict[str, Any],
+    inbound_message: str,
+    reply_text: str,
+    manychat_subscriber_id: str | None,
+) -> None:
+    convex_url = _convex_history_url()
+    if not convex_url or not settings.AGENT_SHARED_SECRET:
+        return
+
+    contact_id = manychat_subscriber_id or user_id
+    if not contact_id:
+        for key in (
+            "contact_id",
+            "contactId",
+            "subscriber_id",
+            "subscriberId",
+            "manychat_subscriber_id",
+        ):
+            value = subscriber_data.get(key)
+            if value:
+                contact_id = str(value)
+                break
+    if not contact_id:
+        return
+
+    now = datetime.now().timestamp()
+    payload = {
+        "contactId": str(contact_id),
+        "message": inbound_message,
+        "receivedAt": now,
+        "agentReplied": True,
+        "agentReplyAt": now,
+        "agentReplyText": reply_text,
+        "lastReplyType": "agent",
+        "rawPayload": {
+            "userId": user_id,
+            "threadId": thread_id,
+            "manychatSubscriberId": manychat_subscriber_id,
+            "subscriberData": subscriber_data,
+        },
+    }
+
+    if user_id:
+        payload["instagramUserId"] = user_id
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.post(
+            convex_url,
+            json=payload,
+            headers={"x-agent-secret": settings.AGENT_SHARED_SECRET.get_secret_value()},
+        )
+        response.raise_for_status()
+
+
 @router.get("/info")
 async def info() -> ServiceMetadata:
     models = list(settings.AVAILABLE_MODELS)
@@ -114,6 +198,48 @@ async def info() -> ServiceMetadata:
         default_agent=DEFAULT_AGENT,
         default_model=settings.DEFAULT_MODEL,
     )
+
+
+@router.get("/health/knowledge")
+async def knowledge_health() -> dict[str, object]:
+    return get_knowledge_source_status()
+
+
+@router.post("/beforest/reply")
+async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse:
+    agent = get_agent("beforest-agent")
+    user_input = UserInput(
+        message=request.message,
+        thread_id=request.thread_id,
+        user_id=request.user_id,
+        agent_config={"subscriber_data": request.subscriber_data},
+    )
+    kwargs, _ = await _handle_input(user_input, agent)
+    response_events: list[tuple[str, Any]] = await agent.ainvoke(
+        **kwargs, stream_mode=["updates", "values"]
+    )  # type: ignore[arg-type]
+    response_type, response = response_events[-1]
+    if response_type == "values":
+        output = langchain_to_chat_message(response["messages"][-1])
+    elif response_type == "updates" and "__interrupt__" in response:
+        output = langchain_to_chat_message(AIMessage(content=response["__interrupt__"][0].value))
+    else:
+        raise HTTPException(status_code=500, detail="Unexpected response type")
+
+    thread_id = request.thread_id or kwargs["config"].configurable["thread_id"]
+    try:
+        await _save_beforest_event_to_convex(
+            user_id=request.user_id,
+            thread_id=str(thread_id),
+            subscriber_data=request.subscriber_data,
+            inbound_message=request.message,
+            reply_text=output.content,
+            manychat_subscriber_id=request.manychat_subscriber_id,
+        )
+    except Exception as exc:
+        logger.error(f"Failed to write Beforest event to Convex: {exc}")
+
+    return BeforestReplyResponse(ok=True, reply=output.content, thread_id=str(thread_id))
 
 
 async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[str, Any], UUID]:
