@@ -338,11 +338,17 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
     else:
         raise HTTPException(status_code=500, detail="Unexpected response type")
 
-    thread_id = request.thread_id or kwargs["config"].configurable["thread_id"]
+    config_payload = kwargs.get("config", {})
+    configurable = (
+        config_payload.get("configurable", {})
+        if isinstance(config_payload, dict)
+        else getattr(config_payload, "configurable", {})
+    )
+    resolved_thread_id = request.thread_id or str(configurable.get("thread_id", ""))
     try:
         await _save_beforest_event_to_convex(
             user_id=request.user_id,
-            thread_id=str(thread_id),
+            thread_id=resolved_thread_id,
             subscriber_data=request.subscriber_data,
             inbound_message=request.message,
             reply_text=output.content,
@@ -357,7 +363,7 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
         except Exception as exc:
             logger.error(f"Failed to push Beforest reply to ManyChat: {exc}")
 
-    return BeforestReplyResponse(ok=True, reply=output.content, thread_id=str(thread_id))
+    return BeforestReplyResponse(ok=True, reply=output.content, thread_id=resolved_thread_id)
 
 
 async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[str, Any], UUID]:
