@@ -463,16 +463,15 @@ def render_knowledge_center_html() -> str:
   .guide { border:1px solid var(--line); border-radius:16px; padding:16px; background:var(--soft-2); }
   .guide strong { display:block; margin-bottom:8px; font:.72rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.18em; }
   .guide p { margin:0; color:var(--muted); line-height:1.55; font-size:.94rem; }
-  .mode-switch { display:flex; gap:8px; flex-wrap:wrap; }
-  .mode-switch button { background:#fff; color:#000; }
-  .mode-switch button.active { background:#000; color:#fff; }
   .section-title { display:flex; justify-content:space-between; align-items:end; gap:10px; }
   .section-title h3 { margin:0; font-size:1.3rem; font-weight:700; letter-spacing:-.03em; font-family:"IBM Plex Sans", Arial, Helvetica, sans-serif; }
   .section-title p { margin:4px 0 0; color:var(--muted); font-size:.92rem; }
-  .split { display:grid; grid-template-columns:minmax(0, 1fr) 320px; gap:16px; align-items:start; }
+  .split { display:grid; grid-template-columns:minmax(0, 1fr) 300px; gap:16px; align-items:start; }
   .detail-card { border:1px solid var(--line); border-radius:16px; padding:16px; background:#fff; }
   .detail-card h4 { margin:0 0 10px; font:.72rem/1 "IBM Plex Sans", Arial, sans-serif; text-transform:uppercase; letter-spacing:.16em; color:var(--muted); }
   .detail-card p { margin:0; color:var(--muted); line-height:1.5; font-size:.9rem; }
+  .utility-grid { display:grid; gap:14px; }
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; }
   .hide { display:none; }
   .login-wrap { min-height:100vh; display:grid; place-items:center; padding:18px; }
   .login-card { width:min(460px, 100%); border:1px solid var(--line-strong); border-radius:22px; padding:30px; background:#fff; }
@@ -488,7 +487,7 @@ def render_knowledge_center_html() -> str:
 <body>
   <div id="app"></div>
   <script>
-  const state = { isAuthed:false, entries:[], activeEntry:null, selectedSlug:null, filters:{ query:"", status:"", type:"" }, statusMessage:"", statusError:false, testResults:[], testQuery:"", testIntent:"", testAudience:"", activePane:"write" };
+  const state = { isAuthed:false, entries:[], activeEntry:null, selectedSlug:null, filters:{ query:"", status:"", type:"" }, statusMessage:"", statusError:false, testResults:[], testQuery:"", testIntent:"", testAudience:"", showImport:false, showTester:false };
   function esc(value) { return String(value || "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;"); }
   function setStatus(message, isError=false) {
     state.statusMessage = message || "";
@@ -583,15 +582,22 @@ def render_knowledge_center_html() -> str:
       newButton.addEventListener("click", () => {
         state.selectedSlug = null;
         state.activeEntry = { slug:"", title:"", type:"fact", summary:"", body:"", tags:[], intent_tags:[], audience_tags:[], priority:0.5, status:"draft", source_url:"" };
-        state.activePane = "write";
+        state.showImport = false;
+        state.showTester = false;
         render();
       });
     }
-    document.querySelectorAll("[data-pane]").forEach((button) => {
-      button.addEventListener("click", () => {
-        state.activePane = button.getAttribute("data-pane");
-        render();
-      });
+    const importToggle = document.getElementById("toggle-import");
+    if (importToggle) importToggle.addEventListener("click", () => {
+      state.showImport = !state.showImport;
+      if (state.showImport) state.showTester = false;
+      render();
+    });
+    const testerToggle = document.getElementById("toggle-tester");
+    if (testerToggle) testerToggle.addEventListener("click", () => {
+      state.showTester = !state.showTester;
+      if (state.showTester) state.showImport = false;
+      render();
     });
     const refreshButton = document.getElementById("refresh-btn");
     if (refreshButton) refreshButton.addEventListener("click", async () => {
@@ -629,7 +635,7 @@ def render_knowledge_center_html() -> str:
         const saved = await api("/knowledge-center/api/import-url", { method:"POST", body:JSON.stringify(payload) });
         event.currentTarget.reset();
         await loadEntries(saved.slug);
-        state.activePane = "write";
+        state.showImport = false;
         setStatus(`Imported ${saved.title}.`);
       } catch (error) {
         setStatus(error.message, true);
@@ -703,6 +709,8 @@ def render_knowledge_center_html() -> str:
           </div>
           <div class="top-actions">
             <button type="button" class="secondary" id="new-entry">New entry</button>
+            <button type="button" class="ghost" id="toggle-import">${state.showImport ? "Close import" : "Import URL"}</button>
+            <button type="button" class="ghost" id="toggle-tester">${state.showTester ? "Close test" : "Retrieval test"}</button>
             <button type="button" class="ghost" id="refresh-btn">Refresh</button>
             <button type="button" class="ghost" id="logout-btn">Log out</button>
           </div>
@@ -726,23 +734,18 @@ def render_knowledge_center_html() -> str:
             </div>
             <section class="panel">
               <div class="panel-head">
-                <h2>Workspace</h2>
-                <div class="mode-switch">
-                  <button type="button" data-pane="write" class="${state.activePane === "write" ? "active" : ""}">Write</button>
-                  <button type="button" data-pane="import" class="${state.activePane === "import" ? "active" : ""}">Import</button>
-                  <button type="button" data-pane="test" class="${state.activePane === "test" ? "active" : ""}">Test</button>
-                </div>
+                <h2>Entry editor</h2>
+                <div class="mini">${active.slug ? esc(active.slug) : "new record"}</div>
               </div>
               <div class="panel-body">
-                <section class="${state.activePane === "write" ? "" : "hide"} stack">
-                  <div class="section-title">
-                    <div>
-                      <h3>${esc(active.title || "New entry")}</h3>
-                      <p>${active.slug ? `Editing ${esc(active.slug)}` : "Create a structured knowledge entry"}</p>
-                    </div>
+                <div class="section-title">
+                  <div>
+                    <h3>${esc(active.title || "New entry")}</h3>
+                    <p>${active.slug ? `Editing ${esc(active.slug)}` : "Create a structured knowledge entry"}</p>
                   </div>
-                  <div class="split">
-                    <form id="entry-form" class="stack">
+                </div>
+                <div class="split">
+                  <form id="entry-form" class="stack">
                 <input type="hidden" name="slug" value="${esc(active.slug)}">
                 <div class="form-grid">
                   <div class="field"><label>Title</label><input name="title" value="${esc(active.title)}" required></div>
@@ -761,22 +764,20 @@ def render_knowledge_center_html() -> str:
                 </div>
                 <div class="field"><label>Body</label><textarea class="textarea-body" name="body" required>${esc(active.body)}</textarea></div>
                 <div class="top-actions"><button type="submit">Save entry</button><div class="status" data-status></div></div>
-                    </form>
-                    <div class="stack">
-                      <div class="detail-card"><h4>What this entry says</h4><p>${esc(active.summary || "Write a short summary so this entry is easy to scan in the library.")}</p></div>
-                      <div class="detail-card"><h4>Tags</h4><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
-                      <div class="detail-card"><h4>Routing metadata</h4><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
-                      <div class="detail-card"><h4>Content preview</h4><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
-                    </div>
+                  </form>
+                  <div class="stack">
+                    <div class="detail-card"><h4>What this entry says</h4><p>${esc(active.summary || "Write a short summary so this entry is easy to scan in the library.")}</p></div>
+                    <div class="detail-card"><h4>Tags</h4><div class="pill-row">${pills(state.activeEntry?.tags || [])}</div></div>
+                    <div class="detail-card"><h4>Routing metadata</h4><div class="pill-row">${pills(state.activeEntry?.intent_tags || [])}</div><div class="pill-row">${pills(state.activeEntry?.audience_tags || [])}</div></div>
+                    <div class="detail-card"><h4>Content preview</h4><div class="preview-body">${state.activeEntry ? esc(state.activeEntry.body) : "No active entry."}</div></div>
                   </div>
-                </section>
-                <section class="${state.activePane === "import" ? "" : "hide"} stack">
-                  <div class="section-title">
-                    <div>
-                      <h3>Import source page</h3>
-                      <p>Pull content from a webpage into Convex, then revise it before approving it for the agent.</p>
-                    </div>
-                  </div>
+                </div>
+              </div>
+            </section>
+            <section class="utility-grid ${state.showImport || state.showTester ? "" : "hide"}">
+              <section class="panel ${state.showImport ? "" : "hide"}">
+                <div class="panel-head"><h2>Import source page</h2><div class="mini">optional tool</div></div>
+                <div class="panel-body">
                   <form id="import-form" class="stack">
                 <div class="field"><label>Import URL</label><input name="url" placeholder="https://example.com/page" required></div>
                 <div class="field"><label>Entry Title</label><input name="title" placeholder="Optional override"></div>
@@ -792,15 +793,12 @@ def render_knowledge_center_html() -> str:
                 <div class="field"><label>Cookie Header</label><textarea name="cookie_header" placeholder="Optional"></textarea></div>
                 <div class="field"><label>Authorization Header</label><textarea name="auth_header" placeholder="Optional"></textarea></div>
                 <button type="submit" class="secondary">Import source</button>
-                  </form>
-                </section>
-                <section class="${state.activePane === "test" ? "" : "hide"} stack">
-                  <div class="section-title">
-                    <div>
-                      <h3>Retrieval test</h3>
-                      <p>Run a query and inspect exactly which entries the agent would use first.</p>
-                    </div>
-                  </div>
+              </form>
+                </div>
+              </section>
+              <section class="panel ${state.showTester ? "" : "hide"}">
+                <div class="panel-head"><h2>Retrieval test</h2><div class="mini">optional tool</div></div>
+                <div class="panel-body stack">
                   <form id="test-form" class="stack">
                 <div class="field"><label>Retrieval Test Query</label><input name="query" value="${esc(state.testQuery)}" placeholder="How does membership work?" required></div>
                 <div class="form-grid">
@@ -810,8 +808,8 @@ def render_knowledge_center_html() -> str:
                 <button type="submit" class="secondary">Test retrieval</button>
               </form>
               ${testCards || '<div class="preview-block"><h3>Retrieval Results</h3><div class="empty">Run a retrieval test to see which Convex entries the agent would pull first.</div></div>'}
-                </section>
-              </div>
+                </div>
+              </section>
             </section>
           </section>
         </section>
