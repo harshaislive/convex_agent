@@ -9,6 +9,7 @@ from langgraph.prebuilt import ToolNode
 
 from agents.beforest_tools import (
     browse_beforest_page,
+    fetch_beforest_markdown,
     search_beforest_experiences,
     search_beforest_knowledge,
     search_beforest_live,
@@ -21,6 +22,7 @@ tools = [
     search_beforest_knowledge,
     search_beforest_live,
     search_beforest_experiences,
+    fetch_beforest_markdown,
     browse_beforest_page,
 ]
 

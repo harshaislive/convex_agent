@@ -90,6 +90,37 @@ def _strip_html_tags(text: str) -> str:
     return _OUTLINE_TAG_RE.sub("", text)
 
 
+_SEMANTIC_TERM_VARIANTS = {
+    "founder": ("founder", "founders", "founded", "founding", "found"),
+    "overview": ("overview", "about", "introduction", "summary", "story"),
+    "visit": ("visit", "visiting", "book", "booking", "stay", "stays"),
+    "hospitality": ("hospitality", "stay", "stays", "accommodation"),
+    "experience": ("experience", "experiences", "retreat", "retreats", "workshop", "workshops"),
+}
+
+
+def _term_variants(term: str) -> list[str]:
+    variants = {term}
+    if term in _SEMANTIC_TERM_VARIANTS:
+        variants.update(_SEMANTIC_TERM_VARIANTS[term])
+
+    if term.endswith("er") and len(term) > 4:
+        stem = term[:-2]
+        variants.update({stem, f"{stem}ed", f"{stem}ing"})
+    if term.endswith("ed") and len(term) > 4:
+        stem = term[:-2]
+        variants.update({stem, f"{stem}ing", f"{stem}er"})
+    if term.endswith("ing") and len(term) > 5:
+        stem = term[:-3]
+        variants.update({stem, f"{stem}ed", f"{stem}er"})
+    if term.endswith("y") and len(term) > 3:
+        variants.add(f"{term[:-1]}ies")
+    elif not term.endswith("s") and len(term) > 3:
+        variants.add(f"{term}s")
+
+    return sorted((variant for variant in variants if variant), key=lambda item: (-len(item), item))
+
+
 def _query_terms(query: str) -> list[str]:
     raw_terms = re.findall(r"\b[\w-]+\b", query.lower())
     filtered = [
@@ -98,14 +129,28 @@ def _query_terms(query: str) -> list[str]:
         if len(term) > 2 or term.isdigit()
         if term not in _COMMON_QUERY_TERMS
     ]
-    ordered = sorted(dict.fromkeys(filtered), key=lambda term: (-len(term), term))
-    return ordered or [term for term in raw_terms if term]
+    expanded: list[str] = []
+    for term in filtered or [term for term in raw_terms if term]:
+        expanded.extend(_term_variants(term))
+    ordered = sorted(dict.fromkeys(expanded), key=lambda term: (-len(term), term))
+    return ordered
 
 
 def _score_text(query: str, text: str) -> int:
     terms = _query_terms(query)
     haystack = text.lower()
-    return sum(haystack.count(term) for term in terms)
+    score = 0
+    for term in terms:
+        matches = haystack.count(term)
+        if not matches:
+            continue
+        weight = 1
+        if term in _SEMANTIC_TERM_VARIANTS:
+            weight = 3
+        elif any(term in variants for variants in _SEMANTIC_TERM_VARIANTS.values()):
+            weight = 2
+        score += matches * weight
+    return score
 
 
 def _split_text_blocks(text: str) -> list[str]:
@@ -323,46 +368,133 @@ def _is_allowed_beforest_url(url: str) -> bool:
     )
 
 
-class _VisibleHTMLParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
+class _MarkdownHTMLParser(HTMLParser):
+    def __init__(self, base_url: str) -> None:
+        super().__init__(convert_charrefs=True)
+        self.base_url = base_url
         self.links: list[str] = []
-        self.parts: list[str] = []
+        self.blocks: list[str] = []
         self.title_parts: list[str] = []
+        self._current_parts: list[str] = []
         self._skip_stack: list[str] = []
         self._in_title = False
+        self._list_stack: list[str] = []
+        self._active_link: str | None = None
+        self._active_link_parts: list[str] = []
+        self._block_prefix = ""
+
+    def _append_inline(self, text: str) -> None:
+        normalized = re.sub(r"\s+", " ", text)
+        if not normalized:
+            return
+        if self._current_parts and not str(self._current_parts[-1]).endswith(
+            (" ", "\n", "(", "[", "/")
+        ) and not normalized.startswith((".", ",", "!", "?", ":", ";", ")", "]")):
+            self._current_parts.append(" ")
+        self._current_parts.append(normalized)
+
+    def _flush_block(self) -> None:
+        raw = "".join(self._current_parts).strip()
+        if raw:
+            self.blocks.append(f"{self._block_prefix}{raw}".rstrip())
+        self._current_parts = []
+        self._block_prefix = ""
+
+    def _begin_block(self, prefix: str = "") -> None:
+        self._flush_block()
+        self._block_prefix = prefix
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = dict(attrs)
         if tag in {"script", "style", "noscript"}:
             self._skip_stack.append(tag)
             return
+        if self._skip_stack:
+            return
         if tag == "title":
             self._in_title = True
             return
         if tag == "a":
             href = attr_map.get("href")
-            if href:
-                self.links.append(href)
+            self._active_link = urljoin(self.base_url, href) if href else None
+            self._active_link_parts = []
+            return
+        if tag in {"p", "div", "section", "article", "main", "header", "footer", "aside", "nav"}:
+            self._flush_block()
+            return
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            level = int(tag[1])
+            self._begin_block("#" * level + " ")
+            return
+        if tag in {"ul", "ol"}:
+            self._flush_block()
+            self._list_stack.append(tag)
+            return
+        if tag == "li":
+            bullet = "-" if not self._list_stack or self._list_stack[-1] == "ul" else "1."
+            indent = "  " * max(len(self._list_stack) - 1, 0)
+            self._begin_block(f"{indent}{bullet} ")
+            return
+        if tag == "br":
+            self._flush_block()
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "noscript"} and self._skip_stack:
             self._skip_stack.pop()
             return
+        if self._skip_stack:
+            return
         if tag == "title":
             self._in_title = False
+            return
+        if tag == "a":
+            link_text = _normalize_text("".join(self._active_link_parts))
+            href = self._active_link
+            if link_text:
+                if href and href.startswith(("http://", "https://")):
+                    self._append_inline(f"[{link_text}]({href})")
+                    if _is_allowed_beforest_url(href) and href not in self.links:
+                        self.links.append(href)
+                else:
+                    self._append_inline(link_text)
+            elif href and _is_allowed_beforest_url(href) and href not in self.links:
+                self.links.append(href)
+            self._active_link = None
+            self._active_link_parts = []
+            return
+        if tag in {"p", "div", "section", "article", "main", "header", "footer", "aside", "nav", "li"}:
+            self._flush_block()
+            return
+        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self._flush_block()
+            return
+        if tag in {"ul", "ol"}:
+            self._flush_block()
+            if self._list_stack:
+                self._list_stack.pop()
 
     def handle_data(self, data: str) -> None:
         if self._skip_stack:
             return
         if self._in_title:
             self.title_parts.append(data)
-        self.parts.append(data)
+        if self._active_link is not None:
+            self._active_link_parts.append(data)
+            return
+        self._append_inline(data)
+
+
+def _markdown_to_text(markdown: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", markdown)
+    text = re.sub(r"^\s*#+\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+\.\s+", "", text, flags=re.MULTILINE)
+    return _normalize_block(text)
 
 
 def _fetch_beforest_page(url: str) -> dict[str, object]:
     if not _is_allowed_beforest_url(url):
-        raise ValueError("URL must be on beforest.co or one of its subdomains.")
+        raise ValueError("URL must be on beforest.co, a beforest.co subdomain, or bewild.life.")
     request = Request(
         url,
         headers={"User-Agent": "BeforestAgent/1.0 (+https://beforest.co)"},
@@ -376,19 +508,20 @@ def _fetch_beforest_page(url: str) -> dict[str, object]:
     except URLError as exc:
         raise RuntimeError(f"Could not fetch {url}: {exc.reason}") from exc
 
-    parser = _VisibleHTMLParser()
+    parser = _MarkdownHTMLParser(url)
     parser.feed(html)
-    links: list[str] = []
-    for href in parser.links:
-        absolute_url = urljoin(url, href)
-        if _is_allowed_beforest_url(absolute_url) and absolute_url not in links:
-            links.append(absolute_url)
+    title = _normalize_text(" ".join(parser.title_parts)) or url
+    markdown = "\n\n".join(block for block in parser.blocks if block.strip()).strip()
+    if not markdown and title:
+        markdown = f"# {title}"
+    text = _markdown_to_text(markdown)
     return {
         "url": url,
         "host": urlparse(url).netloc,
-        "title": _normalize_text(" ".join(parser.title_parts)) or url,
-        "text": _normalize_text(" ".join(parser.parts)),
-        "links": links,
+        "title": title,
+        "markdown": markdown,
+        "text": text,
+        "links": parser.links,
     }
 
 
@@ -489,21 +622,42 @@ def search_beforest_knowledge(
 
 
 @tool
+def fetch_beforest_markdown(url: str) -> dict[str, object]:
+    """Fetch a Beforest-owned page and return clean markdown for agent grounding."""
+    try:
+        page = _fetch_beforest_page(url)
+    except (ValueError, RuntimeError) as exc:
+        return {"url": url, "title": "Unavailable page", "markdown": str(exc), "links": []}
+    return {
+        "url": str(page["url"]),
+        "title": str(page["title"]),
+        "markdown": str(page.get("markdown", "")),
+        "links": page["links"][:8] if isinstance(page["links"], list) else [],
+    }
+
+
+@tool
 def browse_beforest_page(url: str, query: str = "") -> dict[str, object]:
     """Fetch a specific Beforest page for live page-level checks."""
     try:
         page = _fetch_beforest_page(url)
     except (ValueError, RuntimeError) as exc:
-        return {"url": url, "title": "Unavailable page", "snippet": str(exc), "links": []}
+        return {
+            "url": url,
+            "title": "Unavailable page",
+            "snippet": str(exc),
+            "markdown": str(exc),
+            "links": [],
+        }
     text = str(page["text"])
     snippet_query = query or text[:80]
     return {
         "url": str(page["url"]),
         "title": str(page["title"]),
         "snippet": _build_snippet(text, snippet_query, limit=500),
+        "markdown": str(page.get("markdown", "")),
         "links": page["links"][:8] if isinstance(page["links"], list) else [],
     }
-
 
 @tool
 def search_beforest_live(query: str, max_results: int = 5) -> list[dict[str, str | int]]:
