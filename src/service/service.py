@@ -124,8 +124,8 @@ class BeforestReplyResponse(BaseModel):
     thread_id: str
 
 
-BEFOREST_DM_TARGET_LIMIT = 320
-BEFOREST_DM_MAX_SENTENCES = 3
+BEFOREST_DM_TARGET_LIMIT = 220
+BEFOREST_DM_MAX_SENTENCES = 2
 
 
 def _clamp_beforest_dm_reply(text: str) -> str:
@@ -154,7 +154,7 @@ def _clamp_beforest_dm_reply(text: str) -> str:
 
     clipped = normalized[: BEFOREST_DM_TARGET_LIMIT - 1].rstrip()
     last_space = clipped.rfind(" ")
-    if last_space > 120:
+    if last_space > 80:
         clipped = clipped[:last_space]
     return clipped.rstrip(' ,;:') + "…"
 

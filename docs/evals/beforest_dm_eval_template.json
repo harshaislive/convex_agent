@@ -1,0 +1,35 @@
+{
+  "run_metadata": {
+    "name": "beforest_dm_eval_run",
+    "date": "YYYY-MM-DD",
+    "branch": "beforest-toolkit-migration",
+    "endpoint": "/beforest/reply",
+    "reviewer": "",
+    "notes": ""
+  },
+  "criteria": [
+    "grounded_pass",
+    "routing_pass",
+    "hallucination_pass",
+    "dm_style_pass",
+    "actionability_pass",
+    "tone_pass",
+    "link_discipline_pass"
+  ],
+  "rows": [
+    {
+      "id": 1,
+      "category": "Beforest as a whole",
+      "query": "What is Beforest?",
+      "response": "",
+      "grounded_pass": "",
+      "routing_pass": "",
+      "hallucination_pass": "",
+      "dm_style_pass": "",
+      "actionability_pass": "",
+      "tone_pass": "",
+      "link_discipline_pass": "",
+      "notes": ""
+    }
+  ]
+}

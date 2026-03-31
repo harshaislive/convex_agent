@@ -468,7 +468,7 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     assert "regenerative lifestyle company" in result
     assert "collectives page" in result
     assert "extra detail" not in result
-    assert len(result) <= 320
+    assert len(result) <= 220
 
 
 @patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
@@ -494,5 +494,5 @@ def test_beforest_reply_clamps_long_reply(
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["reply"]) <= 320
+    assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
