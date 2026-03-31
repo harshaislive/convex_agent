@@ -232,6 +232,11 @@ def _extract_urls(text: str) -> list[str]:
     return [match.rstrip(".,!?") for match in re.findall(r"https://[^\s)]+", text)]
 
 
+def _remove_urls_from_text(text: str) -> str:
+    cleaned = re.sub(r"\s*https://[^\s)]+", "", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or text
+
 def _button_caption_for_url(url: str) -> str:
     lower_url = url.lower()
     if "experiences.beforest.co" in lower_url:
