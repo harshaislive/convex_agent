@@ -452,3 +452,47 @@ def test_build_manychat_messages_splits_long_instagram_text() -> None:
     assert len(messages) <= 10
     assert all(len(message["text"]) <= 640 for message in messages)
     assert all("buttons" not in message for message in messages)
+
+def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
+    from service.service import _clamp_beforest_dm_reply
+
+    text = (
+        "Beforest is a regenerative lifestyle company. "
+        "You can explore Hammiyala through the collectives page. "
+        "If you want, I can share the direct link. "
+        "Here is extra detail that should not be kept in an Instagram DM reply."
+    )
+
+    result = _clamp_beforest_dm_reply(text)
+
+    assert "regenerative lifestyle company" in result
+    assert "collectives page" in result
+    assert "extra detail" not in result
+    assert len(result) <= 320
+
+
+@patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+def test_beforest_reply_clamps_long_reply(
+    mock_save_beforest_event,
+    mock_load_beforest_history,
+    test_client,
+):
+    long_reply = " ".join(["Beforest builds regenerative communities."] * 30)
+    mock_load_beforest_history.return_value = []
+
+    beforest_agent = AsyncMock()
+    beforest_agent.ainvoke.return_value = [
+        ("values", {"messages": [AIMessage(content=long_reply)]})
+    ]
+
+    with patch("service.service.get_agent", return_value=beforest_agent):
+        response = test_client.post(
+            "/beforest/reply",
+            json={"message": "Tell me about Beforest", "push_to_manychat": False},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["reply"]) <= 320
+    assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]

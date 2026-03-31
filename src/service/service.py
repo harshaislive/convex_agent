@@ -124,6 +124,40 @@ class BeforestReplyResponse(BaseModel):
     thread_id: str
 
 
+BEFOREST_DM_TARGET_LIMIT = 320
+BEFOREST_DM_MAX_SENTENCES = 3
+
+
+def _clamp_beforest_dm_reply(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        return text
+
+    sentences = [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", normalized)
+        if sentence.strip()
+    ]
+    if not sentences:
+        sentences = [normalized]
+
+    kept: list[str] = []
+    for sentence in sentences[:BEFOREST_DM_MAX_SENTENCES]:
+        candidate = sentence if not kept else f"{' '.join(kept)} {sentence}"
+        if len(candidate) <= BEFOREST_DM_TARGET_LIMIT:
+            kept.append(sentence)
+        else:
+            break
+
+    if kept:
+        return " ".join(kept)
+
+    clipped = normalized[: BEFOREST_DM_TARGET_LIMIT - 1].rstrip()
+    last_space = clipped.rfind(" ")
+    if last_space > 120:
+        clipped = clipped[:last_space]
+    return clipped.rstrip(' ,;:') + "…"
+
 def _convex_history_url() -> str | None:
     if settings.CONVEX_HTTP_ACTION_URL:
         return str(settings.CONVEX_HTTP_ACTION_URL).rstrip("/")
@@ -440,6 +474,8 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
     else:
         raise HTTPException(status_code=500, detail="Unexpected response type")
 
+    reply_text = _clamp_beforest_dm_reply(output.content)
+
     config_payload = kwargs.get("config", {})
     configurable = (
         config_payload.get("configurable", {})
@@ -453,7 +489,7 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
             thread_id=resolved_thread_id,
             subscriber_data=request.subscriber_data,
             inbound_message=request.message,
-            reply_text=output.content,
+            reply_text=reply_text,
             manychat_subscriber_id=request.manychat_subscriber_id,
         )
     except Exception as exc:
@@ -461,11 +497,11 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
 
     if request.push_to_manychat and contact_id:
         try:
-            await _push_manychat_reply(str(contact_id), output.content)
+            await _push_manychat_reply(str(contact_id), reply_text)
         except Exception as exc:
             logger.error(f"Failed to push Beforest reply to ManyChat: {exc}")
 
-    return BeforestReplyResponse(ok=True, reply=output.content, thread_id=resolved_thread_id)
+    return BeforestReplyResponse(ok=True, reply=reply_text, thread_id=resolved_thread_id)
 
 
 async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[str, Any], UUID]:
