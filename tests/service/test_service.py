@@ -1,5 +1,8 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+
+import httpx
 
 import langsmith
 import pytest
@@ -375,3 +378,62 @@ def test_info(test_client, mock_settings) -> None:
 
     assert output.default_model == OpenAIModelName.GPT_5_NANO
     assert output.models == [OpenAIModelName.GPT_5_MINI, OpenAIModelName.GPT_5_NANO]
+
+
+def test_build_manychat_content_includes_buttons_for_urls() -> None:
+    from service.service import _build_manychat_content
+
+    content = _build_manychat_content(
+        "Visit https://experiences.beforest.co/retreat and https://bewild.life/shop"
+    )
+
+    assert content["type"] == "instagram"
+    assert content["messages"][0]["type"] == "text"
+    assert content["messages"][0]["text"] == "Visit and"
+    assert len(content["messages"][0]["buttons"]) == 2
+    assert content["messages"][0]["buttons"][0]["caption"] == "Explore Experiences"
+    assert content["messages"][0]["buttons"][1]["caption"] == "Explore Products"
+
+
+@pytest.mark.asyncio
+async def test_push_manychat_reply_retries_without_buttons_on_400() -> None:
+    from service.service import _push_manychat_reply
+
+    responses = [
+        httpx.Response(400, content=b'{"error":"buttons rejected"}'),
+        httpx.Response(200, content=b'{"status":"ok"}'),
+    ]
+    calls: list[dict] = []
+
+    async def fake_post(url: str, **kwargs):
+        calls.append({"url": url, **kwargs})
+        return responses.pop(0)
+
+    fake_client = SimpleNamespace(post=AsyncMock(side_effect=fake_post))
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_token = SimpleNamespace(get_secret_value=lambda: "token")
+
+    with patch("service.service.settings") as mock_settings:
+        mock_settings.MANYCHAT_API_TOKEN = fake_token
+        mock_settings.MANYCHAT_API_BASE_URL = "https://api.manychat.com"
+        mock_settings.MANYCHAT_CHANNEL = "instagram"
+        with patch("service.service.httpx.AsyncClient", FakeAsyncClient):
+            await _push_manychat_reply(
+                "12345", "Visit https://experiences.beforest.co/retreat for details"
+            )
+
+    assert len(calls) == 2
+    assert calls[0]["json"]["data"]["content"]["messages"][0]["text"] == "Visit for details"
+    assert calls[0]["json"]["data"]["content"]["messages"][0]["buttons"]
+    assert calls[1]["json"]["data"]["content"]["messages"][0]["text"] == "Visit https://experiences.beforest.co/retreat for details"
+    assert "buttons" not in calls[1]["json"]["data"]["content"]["messages"][0]

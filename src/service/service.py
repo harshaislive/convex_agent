@@ -245,40 +245,81 @@ def _button_caption_for_url(url: str) -> str:
     return "Explore Beforest"
 
 
-async def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
-    if not settings.MANYCHAT_API_TOKEN:
-        return
-
+def _build_manychat_content(reply_text: str, *, include_buttons: bool = True) -> dict[str, Any]:
     buttons = [
         {"type": "url", "caption": _button_caption_for_url(url), "url": url}
         for url in _extract_urls(reply_text)[:3]
     ]
-    message: dict[str, Any] = {"type": "text", "text": reply_text}
-    if buttons:
+    message_text = _remove_urls_from_text(reply_text) if include_buttons and buttons else reply_text
+    message: dict[str, Any] = {"type": "text", "text": message_text}
+    if include_buttons and buttons:
         message["buttons"] = buttons
 
+    return {
+        "type": settings.MANYCHAT_CHANNEL,
+        "messages": [message],
+        "actions": [],
+        "quick_replies": [],
+    }
+
+
+async def _post_manychat_content(
+    client: httpx.AsyncClient,
+    *,
+    subscriber_id: str,
+    content: dict[str, Any],
+) -> httpx.Response:
     payload = {
         "subscriber_id": int(subscriber_id),
         "data": {
             "version": "v2",
-            "content": {
-                "type": settings.MANYCHAT_CHANNEL,
-                "messages": [message],
-                "actions": [],
-                "quick_replies": [],
-            },
+            "content": content,
         },
     }
 
+    return await client.post(
+        f"{settings.MANYCHAT_API_BASE_URL.rstrip('/')}/fb/sending/sendContent",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {settings.MANYCHAT_API_TOKEN.get_secret_value()}",
+            "Content-Type": "application/json",
+        },
+    )
+
+
+async def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
+    if not settings.MANYCHAT_API_TOKEN:
+        return
+
+    rich_content = _build_manychat_content(reply_text, include_buttons=True)
+    plain_content = _build_manychat_content(reply_text, include_buttons=False)
+
     async with httpx.AsyncClient(timeout=15) as client:
-        response = await client.post(
-            f"{settings.MANYCHAT_API_BASE_URL.rstrip('/')}/fb/sending/sendContent",
-            json=payload,
-            headers={
-                "Authorization": f"Bearer {settings.MANYCHAT_API_TOKEN.get_secret_value()}",
-                "Content-Type": "application/json",
-            },
+        response = await _post_manychat_content(
+            client,
+            subscriber_id=subscriber_id,
+            content=rich_content,
         )
+        if response.is_success:
+            return
+
+        rich_error_body = response.text
+        if response.status_code == 400 and rich_content != plain_content:
+            fallback_response = await _post_manychat_content(
+                client,
+                subscriber_id=subscriber_id,
+                content=plain_content,
+            )
+            if fallback_response.is_success:
+                logger.warning(
+                    "ManyChat rejected rich Beforest reply; delivered plain text fallback instead. "
+                    "status=%s body=%s",
+                    response.status_code,
+                    rich_error_body,
+                )
+                return
+            fallback_response.raise_for_status()
+
         response.raise_for_status()
 
 
