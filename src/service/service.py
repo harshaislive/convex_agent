@@ -237,6 +237,7 @@ def _remove_urls_from_text(text: str) -> str:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned or text
 
+
 def _button_caption_for_url(url: str) -> str:
     lower_url = url.lower()
     if "experiences.beforest.co" in lower_url:
@@ -250,19 +251,74 @@ def _button_caption_for_url(url: str) -> str:
     return "Explore Beforest"
 
 
-def _build_manychat_content(reply_text: str, *, include_buttons: bool = True) -> dict[str, Any]:
+MANYCHAT_MAX_TEXT_LENGTH = 640
+MANYCHAT_MAX_MESSAGES = 10
+
+
+def _split_manychat_text(text: str, *, limit: int = MANYCHAT_MAX_TEXT_LENGTH) -> list[str]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if not normalized:
+        return [""]
+    if len(normalized) <= limit:
+        return [normalized]
+
+    sentence_parts = re.split(r"(?<=[.!?])\s+", normalized)
+    chunks: list[str] = []
+    current = ""
+
+    def flush() -> None:
+        nonlocal current
+        if current:
+            chunks.append(current)
+            current = ""
+
+    for sentence in sentence_parts:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+        candidate = sentence if not current else f"{current} {sentence}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        flush()
+        if len(sentence) <= limit:
+            current = sentence
+            continue
+
+        words = sentence.split()
+        piece = ""
+        for word in words:
+            candidate = word if not piece else f"{piece} {word}"
+            if len(candidate) <= limit:
+                piece = candidate
+            else:
+                if piece:
+                    chunks.append(piece)
+                piece = word[:limit]
+        if piece:
+            current = piece
+    flush()
+
+    return chunks[:MANYCHAT_MAX_MESSAGES]
+
+
+def _build_manychat_messages(reply_text: str, *, include_buttons: bool = True) -> list[dict[str, Any]]:
     buttons = [
         {"type": "url", "caption": _button_caption_for_url(url), "url": url}
         for url in _extract_urls(reply_text)[:3]
     ]
-    message_text = _remove_urls_from_text(reply_text) if include_buttons and buttons else reply_text
-    message: dict[str, Any] = {"type": "text", "text": message_text}
-    if include_buttons and buttons:
-        message["buttons"] = buttons
+    base_text = _remove_urls_from_text(reply_text) if include_buttons and buttons else reply_text
+    text_chunks = _split_manychat_text(base_text)
+    messages: list[dict[str, Any]] = [{"type": "text", "text": chunk} for chunk in text_chunks]
+    if include_buttons and buttons and messages:
+        messages[-1]["buttons"] = buttons
+    return messages
 
+
+def _build_manychat_content(reply_text: str, *, include_buttons: bool = True) -> dict[str, Any]:
     return {
         "type": settings.MANYCHAT_CHANNEL,
-        "messages": [message],
+        "messages": _build_manychat_messages(reply_text, include_buttons=include_buttons),
         "actions": [],
         "quick_replies": [],
     }

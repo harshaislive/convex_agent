@@ -381,7 +381,7 @@ def test_info(test_client, mock_settings) -> None:
 
 
 def test_build_manychat_content_includes_buttons_for_urls() -> None:
-    from service.service import _build_manychat_content
+    from service.service import _build_manychat_content, _build_manychat_messages
 
     content = _build_manychat_content(
         "Visit https://experiences.beforest.co/retreat and https://bewild.life/shop"
@@ -437,3 +437,18 @@ async def test_push_manychat_reply_retries_without_buttons_on_400() -> None:
     assert calls[0]["json"]["data"]["content"]["messages"][0]["buttons"]
     assert calls[1]["json"]["data"]["content"]["messages"][0]["text"] == "Visit https://experiences.beforest.co/retreat for details"
     assert "buttons" not in calls[1]["json"]["data"]["content"]["messages"][0]
+
+
+def test_build_manychat_messages_splits_long_instagram_text() -> None:
+    from service.service import _build_manychat_messages
+
+    long_text = " ".join(["Beforest builds regenerative communities."] * 40)
+
+    with patch("service.service.settings") as mock_settings:
+        mock_settings.MANYCHAT_CHANNEL = "instagram"
+        messages = _build_manychat_messages(long_text, include_buttons=False)
+
+    assert len(messages) > 1
+    assert len(messages) <= 10
+    assert all(len(message["text"]) <= 640 for message in messages)
+    assert all("buttons" not in message for message in messages)
