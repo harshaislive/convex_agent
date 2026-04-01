@@ -242,12 +242,28 @@ def _clamp_beforest_dm_reply(text: str) -> str:
         sentences = [normalized]
 
     kept: list[str] = []
-    for sentence in sentences[:BEFOREST_DM_MAX_SENTENCES]:
+    for sentence in sentences:
+        if len(kept) >= BEFOREST_DM_MAX_SENTENCES:
+            break
         candidate = sentence if not kept else f"{' '.join(kept)} {sentence}"
         if len(candidate) <= BEFOREST_DM_TARGET_LIMIT:
             kept.append(sentence)
-        else:
-            break
+            continue
+
+        if not kept:
+            # If the first sentence is too long, try keeping meaningful clause chunks.
+            clauses = [part.strip() for part in re.split(r"(?<=[,;:])\s+", sentence) if part.strip()]
+            clause_kept = ""
+            for clause in clauses:
+                clause_candidate = clause if not clause_kept else f"{clause_kept} {clause}"
+                if len(clause_candidate) <= BEFOREST_DM_TARGET_LIMIT:
+                    clause_kept = clause_candidate
+                else:
+                    break
+            if clause_kept and len(clause_kept) >= 80:
+                kept.append(clause_kept.rstrip(" ,;:"))
+        # Continue to allow later shorter sentences to fit instead of hard clipping immediately.
+        continue
 
     if kept:
         return " ".join(kept)

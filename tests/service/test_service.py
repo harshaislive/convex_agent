@@ -470,6 +470,20 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     assert len(result) <= 220
 
 
+def test_clamp_beforest_dm_reply_skips_overlong_first_sentence_when_shorter_followup_exists() -> None:
+    from service.service import _clamp_beforest_dm_reply
+
+    long_sentence = " ".join(["Beforest builds regenerative communities"] * 30) + "."
+    text = f"{long_sentence} Check https://experiences.beforest.co for latest experiences."
+
+    result = _clamp_beforest_dm_reply(text)
+
+    assert "https://experiences.beforest.co" in result
+    assert len(result) <= 220
+    assert result.endswith("...") is False
+    assert result.endswith("…") is False
+
+
 def test_enforce_current_experiences_freshness_rewrites_past_live_claim() -> None:
     from service.service import _enforce_current_experiences_freshness
 
