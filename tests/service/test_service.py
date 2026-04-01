@@ -593,6 +593,40 @@ def test_derive_beforest_session_state_auto_closes_stale_confirmation() -> None:
     assert result.closed_reason == "timeout"
 
 
+def test_derive_beforest_automation_state_reads_latest_status() -> None:
+    from service.service import _derive_beforest_automation_state
+
+    events = [
+        {
+            "rawPayload": {
+                "automation": {
+                    "status": "bot",
+                    "updated_at": 10,
+                    "updated_by": "system",
+                    "note": "",
+                }
+            }
+        },
+        {
+            "rawPayload": {
+                "automation": {
+                    "status": "human",
+                    "updated_at": 20,
+                    "updated_by": "ops",
+                    "note": "Team taking over creator lead",
+                }
+            }
+        },
+    ]
+
+    result = _derive_beforest_automation_state(events)
+
+    assert result is not None
+    assert result.status == "human"
+    assert result.updated_by == "ops"
+    assert "creator lead" in result.note
+
+
 def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() -> None:
     from service.service import BeforestSessionState, _next_beforest_session_state
 
@@ -617,6 +651,70 @@ def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() 
     assert result.session_id != "sess-1"
     assert result.session_type == "partnership"
     assert result.status == "open"
+
+
+@pytest.mark.asyncio
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+async def test_beforest_handover_saves_human_ownership(mock_save_beforest_event) -> None:
+    from service.service import BeforestHandoverRequest, beforest_handover
+
+    response = await beforest_handover(
+        BeforestHandoverRequest(
+            status="human",
+            contact_id="12345",
+            updated_by="harsha",
+            note="Human agent picked up the partnership thread",
+        )
+    )
+
+    assert response.ok is True
+    assert response.contact_id == "12345"
+    assert response.handover_status == "human"
+    assert mock_save_beforest_event.await_args.kwargs["agent_replied"] is False
+    assert mock_save_beforest_event.await_args.kwargs["automation_state"].status == "human"
+
+
+@pytest.mark.asyncio
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+@patch("service.service._deliver_beforest_reply_background", new_callable=AsyncMock)
+async def test_beforest_reply_suppresses_when_handover_is_human(
+    mock_deliver_background,
+    mock_load_beforest_events,
+    mock_save_beforest_event,
+) -> None:
+    from service.service import BeforestReplyRequest, beforest_reply
+
+    mock_load_beforest_events.return_value = [
+        {
+            "rawPayload": {
+                "automation": {
+                    "status": "human",
+                    "updated_at": datetime.now().timestamp(),
+                    "updated_by": "ops",
+                    "note": "Human is handling this lead",
+                }
+            }
+        }
+    ]
+
+    response = await beforest_reply(
+        BeforestReplyRequest(
+            message="Any update on the collab?",
+            manychat_subscriber_id="12345",
+            push_to_manychat=True,
+        ),
+        BackgroundTasks(),
+    )
+
+    assert response.ok is True
+    assert response.suppressed is True
+    assert response.queued is False
+    assert response.reply == ""
+    assert response.handover_status == "human"
+    assert mock_deliver_background.await_count == 0
+    assert mock_save_beforest_event.await_args.kwargs["agent_replied"] is False
+    assert mock_save_beforest_event.await_args.kwargs["automation_state"].status == "human"
 
 
 @patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
@@ -835,12 +933,15 @@ def test_beforest_reply_reopens_solved_session_with_context_but_without_old_hist
 
 
 @pytest.mark.asyncio
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
 @patch("service.service._deliver_beforest_reply_background", new_callable=AsyncMock)
 async def test_beforest_reply_queues_background_delivery_for_manychat_push(
     mock_deliver_background,
+    mock_load_beforest_events,
 ):
     from service.service import BeforestReplyRequest, beforest_reply
 
+    mock_load_beforest_events.return_value = []
     background_tasks = BackgroundTasks()
     response = await beforest_reply(
         BeforestReplyRequest(
@@ -854,18 +955,24 @@ async def test_beforest_reply_queues_background_delivery_for_manychat_push(
     assert response.ok is True
     assert response.queued is True
     assert response.reply == ""
+    assert response.handover_status == "bot"
     assert response.thread_id
     assert len(background_tasks.tasks) == 1
     task = background_tasks.tasks[0]
-    assert task.func is mock_deliver_background
+    assert task.func
     assert task.kwargs["manychat_subscriber_id"] == "12345"
     assert task.kwargs["resolved_thread_id"] == response.thread_id
+    assert task.kwargs["automation_state"] is None
 
 
 @pytest.mark.asyncio
-async def test_beforest_reply_rejects_background_push_without_manychat_subscriber():
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+async def test_beforest_reply_rejects_background_push_without_manychat_subscriber(
+    mock_load_beforest_events,
+):
     from service.service import BeforestReplyRequest, beforest_reply
 
+    mock_load_beforest_events.return_value = []
     with pytest.raises(Exception) as exc_info:
         await beforest_reply(
             BeforestReplyRequest(

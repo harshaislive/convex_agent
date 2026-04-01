@@ -7,7 +7,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
@@ -131,6 +131,26 @@ class BeforestReplyResponse(BaseModel):
     reply: str
     thread_id: str
     queued: bool = False
+    suppressed: bool = False
+    handover_status: str = "bot"
+
+
+class BeforestHandoverRequest(BaseModel):
+    status: Literal["bot", "human", "paused"]
+    contact_id: str | None = None
+    user_id: str | None = None
+    manychat_subscriber_id: str | None = None
+    thread_id: str | None = None
+    updated_by: str | None = None
+    note: str | None = None
+    subscriber_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class BeforestHandoverResponse(BaseModel):
+    ok: bool
+    contact_id: str
+    thread_id: str
+    handover_status: str
 
 
 BEFOREST_DM_TARGET_LIMIT = 220
@@ -188,6 +208,14 @@ class BeforestSessionState:
     last_activity_at: float
     resolved_at: float | None = None
     closed_reason: str = ""
+
+
+@dataclass
+class BeforestAutomationState:
+    status: str
+    updated_at: float
+    updated_by: str = ""
+    note: str = ""
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
     "january": 1,
@@ -441,6 +469,42 @@ def _load_session_state_from_event(item: dict[str, Any]) -> BeforestSessionState
     )
 
 
+def _load_automation_state_from_event(item: dict[str, Any]) -> BeforestAutomationState | None:
+    raw_payload = item.get("rawPayload", {})
+    if not isinstance(raw_payload, dict):
+        return None
+    automation_payload = raw_payload.get("automation", {})
+    if not isinstance(automation_payload, dict):
+        return None
+
+    status = str(automation_payload.get("status", "") or "").strip()
+    if status not in {"bot", "human", "paused"}:
+        return None
+
+    updated_at_raw = automation_payload.get("updated_at")
+    try:
+        updated_at = float(updated_at_raw)
+    except (TypeError, ValueError):
+        return None
+
+    return BeforestAutomationState(
+        status=status,
+        updated_at=updated_at,
+        updated_by=str(automation_payload.get("updated_by", "") or "").strip(),
+        note=str(automation_payload.get("note", "") or "").strip(),
+    )
+
+
+def _derive_beforest_automation_state(events: list[dict[str, Any]]) -> BeforestAutomationState | None:
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        automation_state = _load_automation_state_from_event(item)
+        if automation_state is not None:
+            return automation_state
+    return None
+
+
 def _derive_beforest_session_state(
     events: list[dict[str, Any]],
     *,
@@ -614,6 +678,26 @@ def _resolve_beforest_manychat_subscriber_id(request: BeforestReplyRequest) -> s
     return None
 
 
+def _resolve_beforest_handover_contact_id(request: BeforestHandoverRequest) -> str | None:
+    if request.contact_id:
+        return str(request.contact_id)
+    if request.manychat_subscriber_id:
+        return str(request.manychat_subscriber_id)
+    if request.user_id:
+        return str(request.user_id)
+    for key in (
+        "contact_id",
+        "contactId",
+        "subscriber_id",
+        "subscriberId",
+        "manychat_subscriber_id",
+    ):
+        value = request.subscriber_data.get(key)
+        if value:
+            return str(value)
+    return None
+
+
 def _convex_history_url() -> str | None:
     if settings.CONVEX_HTTP_ACTION_URL:
         return str(settings.CONVEX_HTTP_ACTION_URL).rstrip("/")
@@ -676,6 +760,8 @@ async def _save_beforest_event_to_convex(
     reply_text: str,
     manychat_subscriber_id: str | None,
     session_state: BeforestSessionState | None = None,
+    automation_state: BeforestAutomationState | None = None,
+    agent_replied: bool = True,
 ) -> None:
     convex_url = _convex_history_url()
     if not convex_url or not settings.AGENT_SHARED_SECRET:
@@ -702,10 +788,10 @@ async def _save_beforest_event_to_convex(
         "contactId": str(contact_id),
         "message": inbound_message,
         "receivedAt": now,
-        "agentReplied": True,
-        "agentReplyAt": now,
+        "agentReplied": agent_replied,
+        "agentReplyAt": now if agent_replied else None,
         "agentReplyText": reply_text,
-        "lastReplyType": "agent",
+        "lastReplyType": "agent" if agent_replied else "user",
         "rawPayload": {
             "userId": user_id,
             "threadId": thread_id,
@@ -715,6 +801,8 @@ async def _save_beforest_event_to_convex(
     }
     if session_state is not None:
         payload["rawPayload"]["session"] = asdict(session_state)
+    if automation_state is not None:
+        payload["rawPayload"]["automation"] = asdict(automation_state)
 
     if user_id:
         payload["instagramUserId"] = user_id
@@ -889,6 +977,7 @@ async def _generate_beforest_reply_text(
     *,
     contact_id: str | None,
     resolved_thread_id: str,
+    automation_state: BeforestAutomationState | None = None,
 ) -> str:
     agent = get_agent("beforest-agent")
     now_ts = datetime.now().timestamp()
@@ -953,6 +1042,7 @@ async def _generate_beforest_reply_text(
             reply_text=reply_text,
             manychat_subscriber_id=request.manychat_subscriber_id,
             session_state=next_session,
+            automation_state=automation_state,
         )
     except Exception as exc:
         logger.error(f"Failed to write Beforest event to Convex: {exc}")
@@ -966,11 +1056,13 @@ async def _deliver_beforest_reply(
     contact_id: str | None,
     resolved_thread_id: str,
     manychat_subscriber_id: str | None = None,
+    automation_state: BeforestAutomationState | None = None,
 ) -> str:
     reply_text = await _generate_beforest_reply_text(
         request,
         contact_id=contact_id,
         resolved_thread_id=resolved_thread_id,
+        automation_state=automation_state,
     )
     if manychat_subscriber_id:
         await _push_manychat_reply(manychat_subscriber_id, reply_text)
@@ -983,6 +1075,7 @@ async def _deliver_beforest_reply_background(
     contact_id: str | None,
     resolved_thread_id: str,
     manychat_subscriber_id: str,
+    automation_state: BeforestAutomationState | None = None,
 ) -> None:
     try:
         await _deliver_beforest_reply(
@@ -990,6 +1083,7 @@ async def _deliver_beforest_reply_background(
             contact_id=contact_id,
             resolved_thread_id=resolved_thread_id,
             manychat_subscriber_id=manychat_subscriber_id,
+            automation_state=automation_state,
         )
     except Exception as exc:
         logger.error(
@@ -1017,6 +1111,37 @@ async def knowledge_health() -> dict[str, object]:
     return get_knowledge_source_status()
 
 
+@router.post("/beforest/handover")
+async def beforest_handover(request: BeforestHandoverRequest) -> BeforestHandoverResponse:
+    contact_id = _resolve_beforest_handover_contact_id(request)
+    if not contact_id:
+        raise HTTPException(status_code=422, detail="contact_id or manychat_subscriber_id is required")
+
+    resolved_thread_id = request.thread_id or str(uuid4())
+    automation_state = BeforestAutomationState(
+        status=request.status,
+        updated_at=datetime.now().timestamp(),
+        updated_by=request.updated_by or "",
+        note=request.note or "",
+    )
+    await _save_beforest_event_to_convex(
+        user_id=request.user_id,
+        thread_id=resolved_thread_id,
+        subscriber_data=request.subscriber_data,
+        inbound_message="",
+        reply_text="",
+        manychat_subscriber_id=request.manychat_subscriber_id or contact_id,
+        automation_state=automation_state,
+        agent_replied=False,
+    )
+    return BeforestHandoverResponse(
+        ok=True,
+        contact_id=contact_id,
+        thread_id=resolved_thread_id,
+        handover_status=request.status,
+    )
+
+
 @router.post("/beforest/reply")
 async def beforest_reply(
     request: BeforestReplyRequest,
@@ -1024,6 +1149,32 @@ async def beforest_reply(
 ) -> BeforestReplyResponse:
     contact_id = _resolve_beforest_contact_id(request)
     resolved_thread_id = request.thread_id or str(uuid4())
+    history_events = await _load_beforest_events_from_convex(str(contact_id)) if contact_id else []
+    automation_state = _derive_beforest_automation_state(history_events)
+    handover_status = automation_state.status if automation_state is not None else "bot"
+
+    if handover_status in {"human", "paused"}:
+        try:
+            await _save_beforest_event_to_convex(
+                user_id=request.user_id,
+                thread_id=resolved_thread_id,
+                subscriber_data=request.subscriber_data,
+                inbound_message=request.message,
+                reply_text="",
+                manychat_subscriber_id=request.manychat_subscriber_id,
+                automation_state=automation_state,
+                agent_replied=False,
+            )
+        except Exception as exc:
+            logger.error(f"Failed to write suppressed Beforest event to Convex: {exc}")
+        return BeforestReplyResponse(
+            ok=True,
+            reply="",
+            thread_id=resolved_thread_id,
+            queued=False,
+            suppressed=True,
+            handover_status=handover_status,
+        )
 
     if request.push_to_manychat:
         manychat_subscriber_id = _resolve_beforest_manychat_subscriber_id(request)
@@ -1038,15 +1189,28 @@ async def beforest_reply(
             contact_id=contact_id,
             resolved_thread_id=resolved_thread_id,
             manychat_subscriber_id=manychat_subscriber_id,
+            automation_state=automation_state,
         )
-        return BeforestReplyResponse(ok=True, reply="", thread_id=resolved_thread_id, queued=True)
+        return BeforestReplyResponse(
+            ok=True,
+            reply="",
+            thread_id=resolved_thread_id,
+            queued=True,
+            handover_status=handover_status,
+        )
 
     reply_text = await _deliver_beforest_reply(
         request,
         contact_id=contact_id,
         resolved_thread_id=resolved_thread_id,
+        automation_state=automation_state,
     )
-    return BeforestReplyResponse(ok=True, reply=reply_text, thread_id=resolved_thread_id)
+    return BeforestReplyResponse(
+        ok=True,
+        reply=reply_text,
+        thread_id=resolved_thread_id,
+        handover_status=handover_status,
+    )
 
 
 async def _handle_input(user_input: UserInput, agent: AgentGraph) -> tuple[dict[str, Any], UUID]:
