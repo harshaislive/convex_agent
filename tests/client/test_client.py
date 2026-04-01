@@ -81,6 +81,50 @@ def test_invoke(agent_client):
         assert "500 Internal Server Error" in str(exc.value)
 
 
+def test_beforest_handover_methods(agent_client):
+    status_response = Response(
+        200,
+        json={
+            "ok": True,
+            "contact_id": "12345",
+            "handover_status": "human",
+            "updated_by": "founder",
+            "updated_at": 123.0,
+            "note": "Taking over",
+        },
+        request=Request("GET", "http://test/beforest/handover/12345"),
+    )
+    set_response = Response(
+        200,
+        json={
+            "ok": True,
+            "contact_id": "12345",
+            "thread_id": "thread-1",
+            "handover_status": "bot",
+        },
+        request=Request("POST", "http://test/beforest/handover"),
+    )
+
+    with patch("httpx.get", return_value=status_response) as mock_get:
+        payload = agent_client.get_beforest_handover_status("12345")
+        assert payload["handover_status"] == "human"
+        args, kwargs = mock_get.call_args
+        assert args[0].endswith("/beforest/handover/12345")
+
+    with patch("httpx.post", return_value=set_response) as mock_post:
+        payload = agent_client.set_beforest_handover(
+            contact_id="12345",
+            status="bot",
+            updated_by="ops",
+            note="resume automation",
+        )
+        assert payload["handover_status"] == "bot"
+        args, kwargs = mock_post.call_args
+        assert kwargs["json"]["contact_id"] == "12345"
+        assert kwargs["json"]["status"] == "bot"
+        assert kwargs["json"]["updated_by"] == "ops"
+
+
 @pytest.mark.asyncio
 async def test_ainvoke(agent_client):
     """Test asynchronous invocation."""

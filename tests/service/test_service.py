@@ -675,6 +675,44 @@ async def test_beforest_handover_saves_human_ownership(mock_save_beforest_event)
 
 
 @pytest.mark.asyncio
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+async def test_beforest_handover_status_defaults_to_bot(mock_load_beforest_events) -> None:
+    from service.service import beforest_handover_status
+
+    mock_load_beforest_events.return_value = []
+    response = await beforest_handover_status("12345")
+
+    assert response.ok is True
+    assert response.contact_id == "12345"
+    assert response.handover_status == "bot"
+
+
+@pytest.mark.asyncio
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+async def test_beforest_handover_status_returns_latest_saved_state(mock_load_beforest_events) -> None:
+    from service.service import beforest_handover_status
+
+    mock_load_beforest_events.return_value = [
+        {
+            "rawPayload": {
+                "automation": {
+                    "status": "paused",
+                    "updated_at": 20,
+                    "updated_by": "founder",
+                    "note": "reviewing this lead personally",
+                }
+            }
+        }
+    ]
+    response = await beforest_handover_status("12345")
+
+    assert response.ok is True
+    assert response.handover_status == "paused"
+    assert response.updated_by == "founder"
+    assert "reviewing" in response.note
+
+
+@pytest.mark.asyncio
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 @patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
 @patch("service.service._deliver_beforest_reply_background", new_callable=AsyncMock)

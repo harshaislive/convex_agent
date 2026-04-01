@@ -3,6 +3,7 @@ import os
 import urllib.parse
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -51,6 +52,99 @@ def get_or_create_user_id() -> str:
     st.query_params[USER_ID_COOKIE] = user_id
 
     return user_id
+
+
+def _supports_beforest_ops(agent_client: AgentClient) -> bool:
+    if agent_client.agent == "beforest-agent":
+        return True
+    if agent_client.info is None:
+        return False
+    return any(agent.key == "beforest-agent" for agent in agent_client.info.agents)
+
+
+def _format_handover_timestamp(timestamp: float | None) -> str:
+    if not timestamp:
+        return "Unknown"
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def render_beforest_ops(agent_client: AgentClient) -> None:
+    st.caption("Internal handover controls for Beforest Instagram DMs.")
+    contact_id = st.text_input(
+        "ManyChat Contact ID",
+        key="beforest_ops_contact_id",
+        help="Use the ManyChat subscriber/contact id for the Instagram user.",
+    ).strip()
+    operator = st.text_input(
+        "Operator Name",
+        key="beforest_ops_operator",
+        help="Who is taking or releasing the conversation.",
+    ).strip()
+    note = st.text_area(
+        "Handover Note",
+        key="beforest_ops_note",
+        height=80,
+        placeholder="Founder taking over partnership lead",
+    ).strip()
+
+    if "beforest_ops_status" not in st.session_state:
+        st.session_state.beforest_ops_status = None
+
+    col_check, col_takeover = st.columns(2)
+    if col_check.button("Check Status", use_container_width=True, disabled=not contact_id):
+        try:
+            st.session_state.beforest_ops_status = agent_client.get_beforest_handover_status(
+                contact_id
+            )
+        except AgentClientError as exc:
+            st.error(f"Could not load status: {exc}")
+
+    if col_takeover.button("Take Over", use_container_width=True, disabled=not contact_id):
+        try:
+            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
+                contact_id=contact_id,
+                status="human",
+                updated_by=operator or "operator",
+                note=note or "Manual takeover from ops panel",
+            )
+            st.success("Bot paused for this contact. Human can reply manually now.")
+        except AgentClientError as exc:
+            st.error(f"Could not apply takeover: {exc}")
+
+    col_pause, col_resume = st.columns(2)
+    if col_pause.button("Pause Bot", use_container_width=True, disabled=not contact_id):
+        try:
+            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
+                contact_id=contact_id,
+                status="paused",
+                updated_by=operator or "operator",
+                note=note or "Bot paused from ops panel",
+            )
+            st.success("Bot paused for this contact.")
+        except AgentClientError as exc:
+            st.error(f"Could not pause bot: {exc}")
+
+    if col_resume.button("Resume Bot", use_container_width=True, disabled=not contact_id):
+        try:
+            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
+                contact_id=contact_id,
+                status="bot",
+                updated_by=operator or "operator",
+                note=note or "Bot resumed from ops panel",
+            )
+            st.success("Bot resumed for this contact.")
+        except AgentClientError as exc:
+            st.error(f"Could not resume bot: {exc}")
+
+    status_payload = st.session_state.get("beforest_ops_status")
+    if isinstance(status_payload, dict) and status_payload:
+        st.markdown(f"**Current Status:** `{status_payload.get('handover_status', 'bot')}`")
+        st.caption(
+            f"Updated by: {status_payload.get('updated_by', '') or 'system'}"
+            f" at {_format_handover_timestamp(status_payload.get('updated_at'))}"
+        )
+        if status_payload.get("note"):
+            st.write(status_payload["note"])
 
 
 async def main() -> None:
@@ -176,6 +270,10 @@ async def main() -> None:
             st.write(
                 "Prompts, responses and feedback in this app are anonymously recorded and saved to LangSmith for product evaluation and improvement purposes only."
             )
+
+        if _supports_beforest_ops(agent_client):
+            with st.popover(":material/admin_panel_settings: Beforest Ops", use_container_width=True):
+                render_beforest_ops(agent_client)
 
         @st.dialog("Share/resume chat")
         def share_chat_dialog() -> None:

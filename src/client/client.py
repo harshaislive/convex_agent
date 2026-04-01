@@ -360,3 +360,55 @@ class AgentClient:
             raise AgentClientError(f"Error: {e}")
 
         return ChatHistory.model_validate(response.json())
+
+    def get_beforest_handover_status(self, contact_id: str) -> dict[str, Any]:
+        try:
+            response = httpx.get(
+                f"{self.base_url}/beforest/handover/{contact_id}",
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error: {e}")
+
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise AgentClientError("Error: invalid handover status response")
+        return payload
+
+    def set_beforest_handover(
+        self,
+        *,
+        contact_id: str,
+        status: str,
+        updated_by: str | None = None,
+        note: str | None = None,
+        thread_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "contact_id": contact_id,
+            "status": status,
+        }
+        if updated_by:
+            payload["updated_by"] = updated_by
+        if note:
+            payload["note"] = note
+        if thread_id:
+            payload["thread_id"] = thread_id
+
+        try:
+            response = httpx.post(
+                f"{self.base_url}/beforest/handover",
+                json=payload,
+                headers=self._headers,
+                timeout=self.timeout,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as e:
+            raise AgentClientError(f"Error: {e}")
+
+        response_payload = response.json()
+        if not isinstance(response_payload, dict):
+            raise AgentClientError("Error: invalid handover response")
+        return response_payload

@@ -5,7 +5,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from client import AgentClientError
-from schema import ChatHistory, ChatMessage
+from schema import AgentInfo, ChatHistory, ChatMessage, ServiceMetadata
 from schema.models import OpenAIModelName
 
 
@@ -172,6 +172,24 @@ def test_app_new_chat_btn(mock_agent_client):
 
     assert at.session_state.thread_id != thread_id_a
     assert not at.exception
+
+
+def test_supports_beforest_ops_helper() -> None:
+    from streamlit_app import _supports_beforest_ops
+
+    client = Mock()
+    client.agent = "chatbot"
+    client.info = ServiceMetadata(
+        default_agent="beforest-agent",
+        agents=[
+            AgentInfo(key="beforest-agent", description="Beforest"),
+            AgentInfo(key="chatbot", description="Chatbot"),
+        ],
+        default_model=OpenAIModelName.GPT_5_NANO,
+        models=[OpenAIModelName.GPT_5_NANO],
+    )
+
+    assert _supports_beforest_ops(client) is True
 
 
 @pytest.fixture

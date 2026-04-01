@@ -153,6 +153,15 @@ class BeforestHandoverResponse(BaseModel):
     handover_status: str
 
 
+class BeforestHandoverStatusResponse(BaseModel):
+    ok: bool
+    contact_id: str
+    handover_status: str
+    updated_at: float | None = None
+    updated_by: str = ""
+    note: str = ""
+
+
 BEFOREST_DM_TARGET_LIMIT = 220
 BEFOREST_DM_MAX_SENTENCES = 2
 BEFOREST_SESSION_AUTO_CLOSE_SECONDS = 30 * 60
@@ -1139,6 +1148,22 @@ async def beforest_handover(request: BeforestHandoverRequest) -> BeforestHandove
         contact_id=contact_id,
         thread_id=resolved_thread_id,
         handover_status=request.status,
+    )
+
+
+@router.get("/beforest/handover/{contact_id}")
+async def beforest_handover_status(contact_id: str) -> BeforestHandoverStatusResponse:
+    history_events = await _load_beforest_events_from_convex(contact_id)
+    automation_state = _derive_beforest_automation_state(history_events)
+    if automation_state is None:
+        return BeforestHandoverStatusResponse(ok=True, contact_id=contact_id, handover_status="bot")
+    return BeforestHandoverStatusResponse(
+        ok=True,
+        contact_id=contact_id,
+        handover_status=automation_state.status,
+        updated_at=automation_state.updated_at,
+        updated_by=automation_state.updated_by,
+        note=automation_state.note,
     )
 
 
