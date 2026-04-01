@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -130,6 +130,7 @@ class BeforestReplyResponse(BaseModel):
     ok: bool
     reply: str
     thread_id: str
+    queued: bool = False
 
 
 BEFOREST_DM_TARGET_LIMIT = 220
@@ -577,6 +578,42 @@ def _next_beforest_session_state(
         closed_reason=closed_reason,
     )
 
+
+def _resolve_beforest_contact_id(request: BeforestReplyRequest) -> str | None:
+    contact_id = request.manychat_subscriber_id or request.user_id
+    if contact_id:
+        return str(contact_id)
+
+    for key in (
+        "contact_id",
+        "contactId",
+        "subscriber_id",
+        "subscriberId",
+        "manychat_subscriber_id",
+    ):
+        value = request.subscriber_data.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _resolve_beforest_manychat_subscriber_id(request: BeforestReplyRequest) -> str | None:
+    if request.manychat_subscriber_id:
+        return str(request.manychat_subscriber_id)
+
+    for key in (
+        "contact_id",
+        "contactId",
+        "subscriber_id",
+        "subscriberId",
+        "manychat_subscriber_id",
+    ):
+        value = request.subscriber_data.get(key)
+        if value:
+            return str(value)
+    return None
+
+
 def _convex_history_url() -> str | None:
     if settings.CONVEX_HTTP_ACTION_URL:
         return str(settings.CONVEX_HTTP_ACTION_URL).rstrip("/")
@@ -847,50 +884,23 @@ async def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
         response.raise_for_status()
 
 
-@router.get("/info")
-async def info() -> ServiceMetadata:
-    models = list(settings.AVAILABLE_MODELS)
-    models.sort()
-    return ServiceMetadata(
-        agents=get_all_agent_info(),
-        models=models,
-        default_agent=DEFAULT_AGENT,
-        default_model=settings.DEFAULT_MODEL,
-    )
-
-
-@router.get("/health/knowledge")
-async def knowledge_health() -> dict[str, object]:
-    return get_knowledge_source_status()
-
-
-@router.post("/beforest/reply")
-async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse:
+async def _generate_beforest_reply_text(
+    request: BeforestReplyRequest,
+    *,
+    contact_id: str | None,
+    resolved_thread_id: str,
+) -> str:
     agent = get_agent("beforest-agent")
     now_ts = datetime.now().timestamp()
-    contact_id = request.manychat_subscriber_id or request.user_id
-    if not contact_id:
-        for key in (
-            "contact_id",
-            "contactId",
-            "subscriber_id",
-            "subscriberId",
-            "manychat_subscriber_id",
-        ):
-            value = request.subscriber_data.get(key)
-            if value:
-                contact_id = str(value)
-                break
 
     user_input = UserInput(
         message=request.message,
-        thread_id=request.thread_id,
+        thread_id=resolved_thread_id,
         user_id=request.user_id,
         agent_config={"subscriber_data": request.subscriber_data},
     )
     kwargs, _ = await _handle_input(user_input, agent)
     history_events = await _load_beforest_events_from_convex(str(contact_id)) if contact_id else []
-    history_messages = _beforest_messages_from_events(history_events)
     prior_session = _derive_beforest_session_state(
         history_events,
         current_message=request.message,
@@ -934,14 +944,6 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
         reply_text=reply_text,
         now_ts=now_ts,
     )
-
-    config_payload = kwargs.get("config", {})
-    configurable = (
-        config_payload.get("configurable", {})
-        if isinstance(config_payload, dict)
-        else getattr(config_payload, "configurable", {})
-    )
-    resolved_thread_id = request.thread_id or str(configurable.get("thread_id", ""))
     try:
         await _save_beforest_event_to_convex(
             user_id=request.user_id,
@@ -955,12 +957,95 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
     except Exception as exc:
         logger.error(f"Failed to write Beforest event to Convex: {exc}")
 
-    if request.push_to_manychat and contact_id:
-        try:
-            await _push_manychat_reply(str(contact_id), reply_text)
-        except Exception as exc:
-            logger.error(f"Failed to push Beforest reply to ManyChat: {exc}")
+    return reply_text
 
+
+async def _deliver_beforest_reply(
+    request: BeforestReplyRequest,
+    *,
+    contact_id: str | None,
+    resolved_thread_id: str,
+    manychat_subscriber_id: str | None = None,
+) -> str:
+    reply_text = await _generate_beforest_reply_text(
+        request,
+        contact_id=contact_id,
+        resolved_thread_id=resolved_thread_id,
+    )
+    if manychat_subscriber_id:
+        await _push_manychat_reply(manychat_subscriber_id, reply_text)
+    return reply_text
+
+
+async def _deliver_beforest_reply_background(
+    request: BeforestReplyRequest,
+    *,
+    contact_id: str | None,
+    resolved_thread_id: str,
+    manychat_subscriber_id: str,
+) -> None:
+    try:
+        await _deliver_beforest_reply(
+            request,
+            contact_id=contact_id,
+            resolved_thread_id=resolved_thread_id,
+            manychat_subscriber_id=manychat_subscriber_id,
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed background Beforest reply delivery for thread_id=%s contact_id=%s: %s",
+            resolved_thread_id,
+            manychat_subscriber_id,
+            exc,
+        )
+
+
+@router.get("/info")
+async def info() -> ServiceMetadata:
+    models = list(settings.AVAILABLE_MODELS)
+    models.sort()
+    return ServiceMetadata(
+        agents=get_all_agent_info(),
+        models=models,
+        default_agent=DEFAULT_AGENT,
+        default_model=settings.DEFAULT_MODEL,
+    )
+
+
+@router.get("/health/knowledge")
+async def knowledge_health() -> dict[str, object]:
+    return get_knowledge_source_status()
+
+
+@router.post("/beforest/reply")
+async def beforest_reply(
+    request: BeforestReplyRequest,
+    background_tasks: BackgroundTasks,
+) -> BeforestReplyResponse:
+    contact_id = _resolve_beforest_contact_id(request)
+    resolved_thread_id = request.thread_id or str(uuid4())
+
+    if request.push_to_manychat:
+        manychat_subscriber_id = _resolve_beforest_manychat_subscriber_id(request)
+        if not manychat_subscriber_id:
+            raise HTTPException(
+                status_code=422,
+                detail="manychat_subscriber_id or subscriber_data.contact_id is required when push_to_manychat is true",
+            )
+        background_tasks.add_task(
+            _deliver_beforest_reply_background,
+            request.model_copy(deep=True),
+            contact_id=contact_id,
+            resolved_thread_id=resolved_thread_id,
+            manychat_subscriber_id=manychat_subscriber_id,
+        )
+        return BeforestReplyResponse(ok=True, reply="", thread_id=resolved_thread_id, queued=True)
+
+    reply_text = await _deliver_beforest_reply(
+        request,
+        contact_id=contact_id,
+        resolved_thread_id=resolved_thread_id,
+    )
     return BeforestReplyResponse(ok=True, reply=reply_text, thread_id=resolved_thread_id)
 
 

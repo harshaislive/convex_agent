@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import langsmith
 import pytest
+from fastapi import BackgroundTasks
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.pregel.types import StateSnapshot
 from langgraph.types import Interrupt
@@ -644,6 +645,7 @@ def test_beforest_reply_clamps_long_reply(
     assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
     assert mock_save_beforest_event.await_args.kwargs["session_state"].status == "solved"
+    assert payload["queued"] is False
 
 
 @patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
@@ -678,6 +680,7 @@ def test_beforest_reply_rewrites_stale_current_experiences_reply(
     assert "Dec 14, 2025" not in payload["reply"]
     assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
+    assert payload["queued"] is False
 
 
 @patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
@@ -829,3 +832,49 @@ def test_beforest_reply_reopens_solved_session_with_context_but_without_old_hist
     assert input_messages[0].content.startswith("Beforest DM session context.")
     assert input_messages[1].content == "We want to revisit the partnership idea."
     assert mock_save_beforest_event.await_args.kwargs["session_state"].session_id != "sess-partner-closed"
+
+
+@pytest.mark.asyncio
+@patch("service.service._deliver_beforest_reply_background", new_callable=AsyncMock)
+async def test_beforest_reply_queues_background_delivery_for_manychat_push(
+    mock_deliver_background,
+):
+    from service.service import BeforestReplyRequest, beforest_reply
+
+    background_tasks = BackgroundTasks()
+    response = await beforest_reply(
+        BeforestReplyRequest(
+            message="Tell me about stays in Coorg",
+            manychat_subscriber_id="12345",
+            push_to_manychat=True,
+        ),
+        background_tasks,
+    )
+
+    assert response.ok is True
+    assert response.queued is True
+    assert response.reply == ""
+    assert response.thread_id
+    assert len(background_tasks.tasks) == 1
+    task = background_tasks.tasks[0]
+    assert task.func is mock_deliver_background
+    assert task.kwargs["manychat_subscriber_id"] == "12345"
+    assert task.kwargs["resolved_thread_id"] == response.thread_id
+
+
+@pytest.mark.asyncio
+async def test_beforest_reply_rejects_background_push_without_manychat_subscriber():
+    from service.service import BeforestReplyRequest, beforest_reply
+
+    with pytest.raises(Exception) as exc_info:
+        await beforest_reply(
+            BeforestReplyRequest(
+                message="Tell me about stays in Coorg",
+                user_id="ig-user-1",
+                push_to_manychat=True,
+            ),
+            BackgroundTasks(),
+        )
+
+    assert getattr(exc_info.value, "status_code", None) == 422
+    assert "manychat_subscriber_id" in str(getattr(exc_info.value, "detail", ""))
