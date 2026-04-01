@@ -34,7 +34,6 @@ from fastapi.responses import (
 )
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import (
@@ -88,6 +87,8 @@ BEFOREST_FAVICON_PNG_PATH = MEDIA_DIR / "beforest-favicon.png"
 BEFOREST_OG_IMAGE_PATH = MEDIA_DIR / "beforest-og.jpg"
 BEFOREST_ADMIN_STYLESHEET_PATH = "/static/beforest_admin.css"
 BEFOREST_ADMIN_SCRIPT_PATH = "/static/beforest_admin.js"
+BEFOREST_ADMIN_STYLESHEET_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.css"
+BEFOREST_ADMIN_SCRIPT_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.js"
 templates = Jinja2Templates(directory=str(SERVICE_TEMPLATES_DIR))
 
 
@@ -243,7 +244,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_unique_id)
-app.mount("/static", StaticFiles(directory=str(SERVICE_STATIC_DIR)), name="static")
 router = APIRouter(dependencies=[Depends(verify_bearer)])
 
 
@@ -1392,6 +1392,16 @@ async def knowledge_health() -> dict[str, object]:
 @app.get("/favicon.ico", include_in_schema=False)
 async def beforest_favicon() -> FileResponse:
     return FileResponse(BEFOREST_FAVICON_ICO_PATH, media_type="image/x-icon")
+
+
+@app.get(BEFOREST_ADMIN_STYLESHEET_PATH, include_in_schema=False)
+async def beforest_admin_stylesheet() -> FileResponse:
+    return FileResponse(BEFOREST_ADMIN_STYLESHEET_FILE_PATH, media_type="text/css; charset=utf-8")
+
+
+@app.get(BEFOREST_ADMIN_SCRIPT_PATH, include_in_schema=False)
+async def beforest_admin_script() -> FileResponse:
+    return FileResponse(BEFOREST_ADMIN_SCRIPT_FILE_PATH, media_type="text/javascript; charset=utf-8")
 
 
 @app.get("/og/beforest-og.jpg", include_in_schema=False)

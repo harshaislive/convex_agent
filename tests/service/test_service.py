@@ -852,6 +852,17 @@ async def test_beforest_admin_handover_returns_json_for_fetch_requests(mock_befo
     assert b'"handover_status":"paused"' in response.body
 
 
+@pytest.mark.asyncio
+async def test_beforest_admin_asset_routes_return_file_responses() -> None:
+    import service.service as svc
+
+    stylesheet_response = await svc.beforest_admin_stylesheet()
+    script_response = await svc.beforest_admin_script()
+
+    assert stylesheet_response.path == svc.BEFOREST_ADMIN_STYLESHEET_FILE_PATH
+    assert script_response.path == svc.BEFOREST_ADMIN_SCRIPT_FILE_PATH
+
+
 def test_beforest_brand_asset_paths_exist() -> None:
     import service.service as svc
 
@@ -861,6 +872,8 @@ def test_beforest_brand_asset_paths_exist() -> None:
     assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_admin.html").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.css").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.js").exists()
+    assert svc.BEFOREST_ADMIN_STYLESHEET_FILE_PATH.exists()
+    assert svc.BEFOREST_ADMIN_SCRIPT_FILE_PATH.exists()
 
 
 def test_beforest_operating_context_message_includes_collective_rules() -> None:
