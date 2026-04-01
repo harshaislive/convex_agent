@@ -171,6 +171,14 @@ _MONTH_DATE_RE = re.compile(
     r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?(?:\s+(\d{4}))?\b",
     flags=re.IGNORECASE,
 )
+_MONTH_YEAR_RE = re.compile(
+    r"\b("
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+(20\d{2})\b",
+    flags=re.IGNORECASE,
+)
 _ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
 
 
@@ -183,10 +191,18 @@ def _is_current_experiences_query(message: str) -> bool:
 
 def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
     parsed_dates: list[date] = []
+    seen_dates: set[date] = set()
+
+    def add_date(parsed_date: date) -> None:
+        if parsed_date in seen_dates:
+            return
+        seen_dates.add(parsed_date)
+        parsed_dates.append(parsed_date)
+
     for match in _ISO_DATE_RE.finditer(text):
         year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
         try:
-            parsed_dates.append(date(year, month, day))
+            add_date(date(year, month, day))
         except ValueError:
             continue
 
@@ -207,7 +223,18 @@ def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
                 parsed_date = date(year + 1, month, day)
             except ValueError:
                 continue
-        parsed_dates.append(parsed_date)
+        add_date(parsed_date)
+
+    for match in _MONTH_YEAR_RE.finditer(text):
+        month_key = match.group(1).lower()
+        month = _MONTH_NAME_TO_NUMBER.get(month_key)
+        if month is None:
+            continue
+        year = int(match.group(2))
+        try:
+            add_date(date(year, month, 1))
+        except ValueError:
+            continue
     return parsed_dates
 
 

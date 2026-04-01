@@ -543,6 +543,23 @@ def test_enforce_current_experiences_freshness_rewrites_mixed_stale_and_future_d
     assert "https://experiences.beforest.co" in result
 
 
+def test_enforce_current_experiences_freshness_rewrites_stale_month_year_date() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "Are there any Coorg experiences live right now?"
+    stale_month_year_reply = (
+        "No Coorg experiences are live right now. "
+        "Check upcoming ones like Coffee Safari in January 2026 at "
+        "https://experiences.beforest.co."
+    )
+
+    result = _enforce_current_experiences_freshness(message, stale_month_year_reply)
+
+    assert "can't confirm live experience dates" in result
+    assert "https://experiences.beforest.co" in result
+    assert "January 2026" not in result
+
+
 @patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 def test_beforest_reply_clamps_long_reply(
