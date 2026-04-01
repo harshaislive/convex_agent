@@ -13,6 +13,7 @@ from agents.beforest_tools import (
     search_beforest_experiences,
     search_beforest_knowledge,
     search_beforest_live,
+    sync_beforest_experiences_outline,
 )
 from core import get_model, settings
 
@@ -22,6 +23,7 @@ tools = [
     search_beforest_knowledge,
     search_beforest_live,
     search_beforest_experiences,
+    sync_beforest_experiences_outline,
     fetch_beforest_markdown,
     browse_beforest_page,
 ]
@@ -125,6 +127,14 @@ def _latest_human_message(messages: list[BaseMessage]) -> str:
 def _knowledge_context_message(question: str) -> SystemMessage | None:
     if not question.strip():
         return None
+    if "experience" in question.lower() and any(
+        hint in question.lower()
+        for hint in ("upcoming", "current", "currently", "next", "latest", "live", "right now")
+    ):
+        try:
+            sync_beforest_experiences_outline.invoke({"force": True})
+        except Exception:
+            pass
     results = search_beforest_knowledge.invoke({"query": question, "max_results": 3})
     if not isinstance(results, list) or not results:
         return None

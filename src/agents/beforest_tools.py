@@ -28,6 +28,7 @@ DEFAULT_HTTP_TIMEOUT_SECONDS = 10.0
 OUTLINE_PAGE_SIZE = 100
 LIVE_SEARCH_CACHE_TTL_SECONDS = 300
 LIVE_SEARCH_MAX_PAGES = 24
+BEFOREST_EXPERIENCES_OUTLINE_TITLE = "Beforest Experiences Feed"
 _OUTLINE_TAG_RE = re.compile(r"<[^>]+>")
 _COMMON_QUERY_TERMS = {
     "a",
@@ -132,6 +133,14 @@ _MONTH_DATE_RE = re.compile(
     flags=re.IGNORECASE,
 )
 _ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+_MONTH_YEAR_RE = re.compile(
+    r"\b("
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+(20\d{2})\b",
+    flags=re.IGNORECASE,
+)
 _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "current",
     "currently",
@@ -307,10 +316,18 @@ def _is_current_experiences_query(query: str) -> bool:
 
 def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
     parsed_dates: list[date] = []
+    seen_dates: set[date] = set()
+
+    def add_date(parsed_date: date) -> None:
+        if parsed_date in seen_dates:
+            return
+        seen_dates.add(parsed_date)
+        parsed_dates.append(parsed_date)
+
     for match in _ISO_DATE_RE.finditer(text):
         year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
         try:
-            parsed_dates.append(date(year, month, day))
+            add_date(date(year, month, day))
         except ValueError:
             continue
 
@@ -331,7 +348,18 @@ def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
                 parsed_date = date(year + 1, month, day)
             except ValueError:
                 continue
-        parsed_dates.append(parsed_date)
+        add_date(parsed_date)
+
+    for match in _MONTH_YEAR_RE.finditer(text):
+        month_key = match.group(1).lower()
+        month = _MONTH_NAME_TO_NUMBER.get(month_key)
+        if month is None:
+            continue
+        year = int(match.group(2))
+        try:
+            add_date(date(year, month, 1))
+        except ValueError:
+            continue
     return parsed_dates
 
 
@@ -383,6 +411,145 @@ def _outline_request(path: str, payload: dict[str, object]) -> dict[str, object]
     if not isinstance(parsed, dict):
         raise RuntimeError(f"Outline API {path} returned unexpected payload.")
     return parsed
+
+
+def _invalidate_outline_cache() -> None:
+    _OUTLINE_CACHE["docs"] = []
+    _OUTLINE_CACHE["chunks"] = []
+    _OUTLINE_CACHE["fetched_at"] = 0.0
+    _OUTLINE_CACHE["error"] = ""
+
+
+def _find_outline_document_by_title(title: str) -> dict[str, object] | None:
+    normalized_title = _normalize_text(title).casefold()
+    for document in _fetch_outline_documents():
+        document_title = _normalize_text(str(document.get("title", ""))).casefold()
+        if document_title == normalized_title:
+            return document
+    return None
+
+
+def _format_experience_date_label(parsed_dates: list[date]) -> str:
+    unique_dates = sorted(dict.fromkeys(parsed_dates))
+    if not unique_dates:
+        return ""
+    if len(unique_dates) == 1:
+        return unique_dates[0].strftime("%B %-d, %Y")
+    return " / ".join(parsed_date.strftime("%B %-d, %Y") for parsed_date in unique_dates[:3])
+
+
+def _build_beforest_experiences_outline_markdown(*, today: date) -> tuple[str, list[dict[str, str]]]:
+    pages = [
+        page
+        for page in _load_live_search_pages()
+        if str(page.get("host", "")) == "experiences.beforest.co"
+    ]
+    entries: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for page in pages:
+        url = str(page.get("url", "") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        page_text = "\n".join(
+            [
+                str(page.get("title", "")),
+                str(page.get("text", "")),
+                str(page.get("markdown", "")),
+            ]
+        )
+        parsed_dates = [parsed_date for parsed_date in _extract_dates_from_text(page_text, today=today) if parsed_date >= today]
+        if not parsed_dates:
+            continue
+        seen_urls.add(url)
+        title = str(page.get("title", "Untitled experience")).strip() or "Untitled experience"
+        snippet = _build_snippet(str(page.get("text", "")), title, limit=320)
+        entries.append(
+            {
+                "title": title,
+                "url": url,
+                "dates": _format_experience_date_label(parsed_dates),
+                "snippet": snippet,
+            }
+        )
+
+    entries.sort(key=lambda item: item["dates"])
+    synced_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    lines = [
+        "# Beforest Experiences Feed",
+        "",
+        f"Synced at: {synced_at}",
+        f"Source: {EXPERIENCES_BASE_URL}",
+        "",
+        "This document is generated from experiences.beforest.co and only keeps future-dated listings.",
+        "",
+    ]
+    if not entries:
+        lines.extend(
+            [
+                "## Status",
+                "",
+                "No upcoming dated experiences were confirmed during this sync.",
+                f"Check {EXPERIENCES_BASE_URL} for the newest listings.",
+            ]
+        )
+    else:
+        lines.extend(["## Upcoming Experiences", ""])
+        for entry in entries:
+            lines.extend(
+                [
+                    f"### {entry['title']}",
+                    "",
+                    f"- Dates: {entry['dates']}",
+                    f"- Link: {entry['url']}",
+                    f"- Summary: {entry['snippet']}",
+                    "",
+                ]
+            )
+    return "\n".join(lines).strip(), entries
+
+
+def _sync_beforest_experiences_to_outline(*, force: bool = True) -> dict[str, object]:
+    api_url = settings.OUTLINE_API_URL
+    token = settings.OUTLINE_API_TOKEN
+    if not api_url or not token:
+        return {
+            "ok": False,
+            "updated": False,
+            "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+            "error": "Missing Outline URL or token.",
+        }
+
+    today = datetime.now(UTC).date()
+    markdown, entries = _build_beforest_experiences_outline_markdown(today=today)
+    existing = _find_outline_document_by_title(BEFOREST_EXPERIENCES_OUTLINE_TITLE)
+    payload: dict[str, object] = {
+        "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+        "text": markdown,
+        "publish": True,
+    }
+    if settings.OUTLINE_COLLECTION_ID:
+        payload["collectionId"] = settings.OUTLINE_COLLECTION_ID
+
+    if existing and str(existing.get("id", "")).strip():
+        payload["id"] = str(existing["id"])
+        response = _outline_request("documents.update", payload)
+        updated = True
+    else:
+        response = _outline_request("documents.create", payload)
+        updated = False
+
+    _invalidate_outline_cache()
+    doc_data = response.get("data", {}) if isinstance(response, dict) else {}
+    document_id = str(doc_data.get("id", "") or payload.get("id", ""))
+    return {
+        "ok": True,
+        "updated": updated,
+        "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+        "documentId": document_id,
+        "entryCount": len(entries),
+        "source": EXPERIENCES_BASE_URL,
+    }
 
 
 def _fetch_outline_documents() -> list[dict[str, object]]:
@@ -718,6 +885,12 @@ def search_beforest_knowledge(
         "Outline results: " + ", ".join(str(item.get("source", "")) for item in results)
     )
     return results
+
+
+@tool
+def sync_beforest_experiences_outline(force: bool = True) -> dict[str, object]:
+    """Refresh the canonical Outline doc for Beforest experiences from the live experiences site."""
+    return _sync_beforest_experiences_to_outline(force=force)
 
 
 @tool

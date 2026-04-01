@@ -1,11 +1,14 @@
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from agents.beforest_tools import (
+    _build_beforest_experiences_outline_markdown,
     _fetch_beforest_page,
     _is_allowed_beforest_url,
     _query_terms,
     _score_text,
+    _sync_beforest_experiences_to_outline,
     browse_beforest_page,
     fetch_beforest_markdown,
     search_beforest_experiences,
@@ -164,3 +167,55 @@ def test_search_beforest_experiences_treats_next_query_as_fresh_date_request(moc
     assert len(results) == 1
     assert results[0]["source"] == "Live experiences status"
     assert results[0]["url"] == "https://experiences.beforest.co/"
+
+
+@patch("agents.beforest_tools._load_live_search_pages")
+def test_build_beforest_experiences_outline_markdown_keeps_only_future_entries(mock_pages):
+    mock_pages.return_value = [
+        {
+            "host": "experiences.beforest.co",
+            "title": "Past event",
+            "text": "Starry Nights happened on March 1, 2020.",
+            "markdown": "# Past event\n\nMarch 1, 2020",
+            "url": "https://experiences.beforest.co/past",
+        },
+        {
+            "host": "experiences.beforest.co",
+            "title": "Future event",
+            "text": "Coffee Safari returns on January 26, 2099.",
+            "markdown": "# Future event\n\nJanuary 26, 2099",
+            "url": "https://experiences.beforest.co/future",
+        },
+    ]
+
+    markdown, entries = _build_beforest_experiences_outline_markdown(today=date(2026, 4, 1))
+
+    assert "Future event" in markdown
+    assert "https://experiences.beforest.co/future" in markdown
+    assert "Past event" not in markdown
+    assert len(entries) == 1
+
+
+@patch("agents.beforest_tools._outline_request")
+@patch("agents.beforest_tools._find_outline_document_by_title")
+@patch("agents.beforest_tools._build_beforest_experiences_outline_markdown")
+def test_sync_beforest_experiences_to_outline_updates_existing_doc(
+    mock_build_markdown, mock_find_doc, mock_outline_request
+):
+    mock_build_markdown.return_value = (
+        "# Beforest Experiences Feed\n\nFuture event",
+        [{"title": "Future event", "url": "https://experiences.beforest.co/future", "dates": "January 26, 2099", "snippet": "Future event"}],
+    )
+    mock_find_doc.return_value = {"id": "doc-123", "title": "Beforest Experiences Feed"}
+    mock_outline_request.return_value = {"data": {"id": "doc-123"}}
+
+    with (
+        patch("agents.beforest_tools.settings.OUTLINE_API_URL", "https://outline.example.com"),
+        patch("agents.beforest_tools.settings.OUTLINE_API_TOKEN", SimpleNamespace(get_secret_value=lambda: "token")),
+    ):
+        result = _sync_beforest_experiences_to_outline()
+
+    assert result["ok"] is True
+    assert result["updated"] is True
+    assert result["documentId"] == "doc-123"
+    assert mock_outline_request.call_args.args[0] == "documents.update"
