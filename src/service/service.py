@@ -219,8 +219,8 @@ def _render_beforest_admin_page(
           <p>Search contacts and switch bot ownership inline.</p>
         </div>
       </div>
-      <form method="get" action="/admin/beforest" class="search-row">
-        <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" />
+      <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
+        <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" autocomplete="off" />
         <button class="secondary" type="submit">Search</button>
       </form>
       <div class="table-head">
@@ -377,6 +377,21 @@ def _render_beforest_admin_page(
             .search-row {{ grid-template-columns: 1fr; }}
           }}
         </style>
+        <script>
+          document.addEventListener("DOMContentLoaded", function () {{
+            const form = document.querySelector("form[data-live-search='true']");
+            if (!form) return;
+            const input = form.querySelector("input[name='q']");
+            if (!input) return;
+            let timer = null;
+            input.addEventListener("input", function () {{
+              window.clearTimeout(timer);
+              timer = window.setTimeout(function () {{
+                form.requestSubmit();
+              }}, 220);
+            }});
+          }});
+        </script>
       </head>
       <body>
         <div class="shell">
