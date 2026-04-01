@@ -23,7 +23,6 @@ tools = [
     search_beforest_knowledge,
     search_beforest_live,
     search_beforest_experiences,
-    sync_beforest_experiences_outline,
     fetch_beforest_markdown,
     browse_beforest_page,
 ]

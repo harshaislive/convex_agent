@@ -944,6 +944,14 @@ def test_beforest_operating_context_message_includes_typeform_for_high_intent() 
     assert "form.typeform.com/to/i8eBLQkz" in result.content
 
 
+def test_beforest_agent_tools_do_not_expose_outline_sync_directly() -> None:
+    from agents.beforest_agent import tools
+
+    tool_names = {tool.name for tool in tools}
+
+    assert "sync_beforest_experiences_outline" not in tool_names
+
+
 @pytest.mark.asyncio
 @patch("service.service.httpx.AsyncClient")
 async def test_save_beforest_event_omits_null_agent_reply_at(mock_async_client_class) -> None:

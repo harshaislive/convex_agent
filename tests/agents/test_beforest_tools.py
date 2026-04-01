@@ -254,3 +254,23 @@ def test_sync_beforest_experiences_to_outline_updates_existing_doc(
     assert result["updated"] is True
     assert result["documentId"] == "doc-123"
     assert mock_outline_request.call_args.args[0] == "documents.update"
+
+
+@patch("agents.beforest_tools._build_beforest_experiences_outline_markdown")
+@patch("agents.beforest_tools._find_outline_document_by_title")
+@patch("agents.beforest_tools._outline_request", side_effect=RuntimeError("Outline write failed"))
+def test_sync_beforest_experiences_to_outline_returns_safe_error_payload(
+    mock_outline_request, mock_find_doc, mock_build_markdown
+):
+    mock_build_markdown.return_value = ("# Beforest Experiences Feed", [])
+    mock_find_doc.return_value = None
+
+    with (
+        patch("agents.beforest_tools.settings.OUTLINE_API_URL", "https://outline.example.com"),
+        patch("agents.beforest_tools.settings.OUTLINE_API_TOKEN", SimpleNamespace(get_secret_value=lambda: "token")),
+    ):
+        result = _sync_beforest_experiences_to_outline()
+
+    assert result["ok"] is False
+    assert "Outline write failed" in str(result["error"])
+    assert mock_outline_request.called is True

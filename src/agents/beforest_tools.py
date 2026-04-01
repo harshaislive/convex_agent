@@ -547,36 +547,45 @@ def _sync_beforest_experiences_to_outline(*, force: bool = True, quick: bool = F
             "error": "Missing Outline URL or token.",
         }
 
-    today = datetime.now(UTC).date()
-    markdown, entries = _build_beforest_experiences_outline_markdown(today=today, quick=quick)
-    existing = _find_outline_document_by_title(BEFOREST_EXPERIENCES_OUTLINE_TITLE)
-    payload: dict[str, object] = {
-        "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
-        "text": markdown,
-        "publish": True,
-    }
-    if settings.OUTLINE_COLLECTION_ID:
-        payload["collectionId"] = settings.OUTLINE_COLLECTION_ID
+    try:
+        today = datetime.now(UTC).date()
+        markdown, entries = _build_beforest_experiences_outline_markdown(today=today, quick=quick)
+        existing = _find_outline_document_by_title(BEFOREST_EXPERIENCES_OUTLINE_TITLE)
+        payload: dict[str, object] = {
+            "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+            "text": markdown,
+            "publish": True,
+        }
+        if settings.OUTLINE_COLLECTION_ID:
+            payload["collectionId"] = settings.OUTLINE_COLLECTION_ID
 
-    if existing and str(existing.get("id", "")).strip():
-        payload["id"] = str(existing["id"])
-        response = _outline_request("documents.update", payload)
-        updated = True
-    else:
-        response = _outline_request("documents.create", payload)
-        updated = False
+        if existing and str(existing.get("id", "")).strip():
+            payload["id"] = str(existing["id"])
+            response = _outline_request("documents.update", payload)
+            updated = True
+        else:
+            response = _outline_request("documents.create", payload)
+            updated = False
 
-    _invalidate_outline_cache()
-    doc_data = response.get("data", {}) if isinstance(response, dict) else {}
-    document_id = str(doc_data.get("id", "") or payload.get("id", ""))
-    return {
-        "ok": True,
-        "updated": updated,
-        "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
-        "documentId": document_id,
-        "entryCount": len(entries),
-        "source": EXPERIENCES_BASE_URL,
-    }
+        _invalidate_outline_cache()
+        doc_data = response.get("data", {}) if isinstance(response, dict) else {}
+        document_id = str(doc_data.get("id", "") or payload.get("id", ""))
+        return {
+            "ok": True,
+            "updated": updated,
+            "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+            "documentId": document_id,
+            "entryCount": len(entries),
+            "source": EXPERIENCES_BASE_URL,
+        }
+    except RuntimeError as exc:
+        return {
+            "ok": False,
+            "updated": False,
+            "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
+            "error": str(exc),
+            "source": EXPERIENCES_BASE_URL,
+        }
 
 
 def _fetch_outline_documents() -> list[dict[str, object]]:
