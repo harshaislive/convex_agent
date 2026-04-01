@@ -77,10 +77,21 @@ from service.utils import (
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
-REPO_ROOT = Path(__file__).resolve().parents[2]
 SERVICE_DIR = Path(__file__).resolve().parent
 SERVICE_TEMPLATES_DIR = SERVICE_DIR / "templates"
 SERVICE_STATIC_DIR = SERVICE_DIR / "static"
+
+
+def _resolve_repo_root(current_file: Path) -> Path:
+    resolved = current_file.resolve()
+    candidates = [resolved.parents[2], resolved.parents[1]]
+    for candidate in candidates:
+        if (candidate / "media").exists():
+            return candidate
+    return candidates[0]
+
+
+REPO_ROOT = _resolve_repo_root(Path(__file__))
 MEDIA_DIR = REPO_ROOT / "media"
 BEFOREST_FAVICON_ICO_PATH = MEDIA_DIR / "favicon.ico"
 BEFOREST_FAVICON_PNG_PATH = MEDIA_DIR / "beforest-favicon.png"
@@ -122,6 +133,14 @@ def _beforest_ops_authenticated(request: Request) -> bool:
         return False
     actual_cookie = str(request.cookies.get(BEFOREST_OPS_COOKIE_NAME, "") or "")
     return bool(actual_cookie) and secrets.compare_digest(actual_cookie, expected_cookie)
+
+
+def _external_base_url(request: Request) -> str:
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
+    forwarded_host = (request.headers.get("x-forwarded-host") or "").split(",")[0].strip()
+    if forwarded_proto and forwarded_host:
+        return f"{forwarded_proto}://{forwarded_host}"
+    return str(request.base_url).rstrip("/")
 
 
 def _format_beforest_ops_timestamp(value: Any) -> str:
@@ -1417,8 +1436,11 @@ async def beforest_admin_page(
     message: str = "",
     error: str = "",
 ) -> HTMLResponse:
-    base_url = str(request.base_url).rstrip("/")
-    page_url = str(request.url)
+    base_url = _external_base_url(request)
+    query_string = request.url.query
+    page_url = f"{base_url}{request.url.path}"
+    if query_string:
+        page_url += f"?{query_string}"
     favicon_url = f"{base_url}/favicon.ico"
     og_image_url = f"{base_url}/og/beforest-og.jpg"
     template_context = {

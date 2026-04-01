@@ -692,12 +692,59 @@ def test_beforest_ops_cookie_auth_roundtrip() -> None:
         assert svc._beforest_ops_authenticated(request) is True
 
 
+def test_resolve_repo_root_falls_back_to_container_layout(tmp_path) -> None:
+    import service.service as svc
+
+    app_root = tmp_path / "app"
+    service_dir = app_root / "service"
+    media_dir = app_root / "media"
+    service_dir.mkdir(parents=True)
+    media_dir.mkdir()
+    current_file = service_dir / "service.py"
+    current_file.write_text("# stub", encoding="utf-8")
+
+    assert svc._resolve_repo_root(current_file) == app_root
+
+
+def test_external_base_url_prefers_forwarded_headers() -> None:
+    import service.service as svc
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin/beforest",
+            "headers": [
+                (b"host", b"internal-service"),
+                (b"x-forwarded-proto", b"https"),
+                (b"x-forwarded-host", b"agentig.devsharsha.live"),
+            ],
+            "scheme": "http",
+            "server": ("internal-service", 8080),
+        }
+    )
+
+    assert svc._external_base_url(request) == "https://agentig.devsharsha.live"
+
+
 @pytest.mark.asyncio
 async def test_beforest_admin_page_renders_login_form() -> None:
     import service.service as svc
 
     fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
-    request = Request({"type": "http", "method": "GET", "path": "/admin/beforest", "headers": []})
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin/beforest",
+            "headers": [
+                (b"x-forwarded-proto", b"https"),
+                (b"x-forwarded-host", b"agentig.devsharsha.live"),
+            ],
+            "scheme": "http",
+            "server": ("internal-service", 8080),
+        }
+    )
     with patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret):
         response = await svc.beforest_admin_page(request)
 
@@ -709,6 +756,7 @@ async def test_beforest_admin_page_renders_login_form() -> None:
     assert 'rel="icon"' in body
     assert '/static/beforest_admin.css' in body
     assert '/static/beforest_admin.js' in body
+    assert 'href="https://agentig.devsharsha.live/favicon.ico"' in body
 
 
 @pytest.mark.asyncio
