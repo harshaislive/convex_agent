@@ -167,10 +167,14 @@ def _render_beforest_admin_page(
         updated_at = _escape_html(_format_beforest_ops_timestamp(status_payload.get("updated_at")))
         status_markup = f"""
         <section class="panel">
-          <div class="label">Current Status</div>
-          <div class="status">{handover_status}</div>
-          <div class="meta">Updated by {updated_by} at {updated_at}</div>
-          <div class="note">{note}</div>
+          <div class="stack compact">
+            <div class="label">Current Status</div>
+            <div class="status-row">
+              <span class="badge neutral">{handover_status}</span>
+              <span class="meta">Updated by {updated_by} at {updated_at}</span>
+            </div>
+            <div class="note">{note}</div>
+          </div>
         </section>
         """
     conversation_cards = ""
@@ -203,7 +207,7 @@ def _render_beforest_admin_page(
           <div class="conversation-head">
             <div>
               <a class="name-link" href="/admin/beforest?contact_id={urllib.parse.quote_plus(item_contact_id)}{query_suffix}">{display_name_html}</a>
-              <div class="conversation-meta">{username_html} · {contact_id_html}</div>
+              <div class="conversation-meta">{username_html} <span class="dot">•</span> {contact_id_html}</div>
             </div>
             <span class="badge {status_class}">{_escape_html(handover_status)}</span>
           </div>
@@ -212,15 +216,6 @@ def _render_beforest_admin_page(
             <span>{timestamp_html}</span>
             <span>{note_html}</span>
           </div>
-          <form method="post" action="/admin/beforest/handover" class="conversation-actions">
-            <input type="hidden" name="contact_id" value="{contact_id_html}" />
-            <input type="hidden" name="updated_by" value="ops" />
-            <input type="hidden" name="note" value="" />
-            <input type="hidden" name="q" value="{safe_search_query}" />
-            <button type="submit" name="status" value="human">Take Over</button>
-            <button class="warn" type="submit" name="status" value="paused">Pause</button>
-            <button class="secondary" type="submit" name="status" value="bot">Resume</button>
-          </form>
         </article>
         """
     if authenticated and not conversation_cards:
@@ -240,45 +235,50 @@ def _render_beforest_admin_page(
     controls_markup = f"""
     <div class="layout">
       <section class="panel stack">
-        <form method="get" action="/admin/beforest" class="stack">
-          <label>Search Conversations
-            <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, last message" />
-          </label>
-          <button class="secondary" type="submit">Search Inbox</button>
+        <div class="stack compact">
+          <div>
+            <h2>Inbox</h2>
+            <p>Search by name, username, contact ID, or message.</p>
+          </div>
+        </div>
+        <form method="get" action="/admin/beforest" class="search-row">
+          <input type="text" name="q" value="{safe_search_query}" placeholder="Search conversations" />
+          <button class="secondary" type="submit">Search</button>
         </form>
-        <div class="label">Recent Conversations</div>
         <div class="conversation-list">{conversation_cards}</div>
       </section>
       <section class="stack">
         <section class="panel stack">
-          <form method="get" action="/admin/beforest" class="stack">
+          <div>
+            <h2>Conversation</h2>
+            <p>Pick a thread from the inbox to manage handover.</p>
+          </div>
+          <form method="get" action="/admin/beforest" class="stack compact">
             <input type="hidden" name="q" value="{safe_search_query}" />
-            <label>Selected Contact ID
+            <label>Contact ID
               <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
             </label>
-            <button class="secondary" type="submit">Load Contact</button>
+            <button class="ghost" type="submit">Open Thread</button>
           </form>
           {status_markup}
         </section>
         <section class="panel stack">
           <form method="post" action="/admin/beforest/handover" class="stack">
             <input type="hidden" name="q" value="{safe_search_query}" />
-            <label>ManyChat Contact ID
+            <label>Contact ID
               <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
             </label>
-            <div class="row">
-              <label>Operator
-                <input type="text" name="updated_by" placeholder="founder" />
-              </label>
-            </div>
-            <label>Note
-              <textarea name="note" placeholder="Founder taking over partnership conversation"></textarea>
+            <label>Operator
+              <input type="text" name="updated_by" placeholder="founder" />
             </label>
-            <div class="actions">
+            <label>Note
+              <textarea name="note" placeholder="Optional internal note"></textarea>
+            </label>
+            <div class="actions two">
               <button type="submit" name="status" value="human">Take Over</button>
-              <button class="warn" type="submit" name="status" value="paused">Pause Bot</button>
               <button class="secondary" type="submit" name="status" value="bot">Resume Bot</button>
             </div>
+            <button class="ghost small" type="submit" name="status" value="paused">Pause Bot</button>
           </form>
         </section>
       </section>
@@ -294,130 +294,142 @@ def _render_beforest_admin_page(
         <title>Beforest Ops</title>
         <style>
           :root {{
-            --bg: #f4efe4;
-            --panel: #fffaf0;
-            --ink: #233126;
-            --muted: #5f6f61;
-            --line: #d7ccb3;
-            --accent: #2f5e43;
-            --warn: #9c5c22;
-            --danger: #8a2f2f;
+            --bg: #f7f7f5;
+            --panel: #ffffff;
+            --ink: #191919;
+            --muted: #6f6f6b;
+            --line: #e6e6e2;
+            --accent: #191919;
+            --soft: #f1f1ef;
+            --danger: #b42318;
           }}
           * {{ box-sizing: border-box; }}
           body {{
             margin: 0;
-            font-family: Georgia, "Times New Roman", serif;
-            background: linear-gradient(180deg, #f4efe4 0%, #ece3d3 100%);
+            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: var(--bg);
             color: var(--ink);
           }}
           .shell {{
-            max-width: 1180px;
-            margin: 48px auto;
-            padding: 0 20px;
+            max-width: 1120px;
+            margin: 28px auto;
+            padding: 0 18px;
           }}
           .panel {{
             background: var(--panel);
             border: 1px solid var(--line);
-            border-radius: 16px;
-            padding: 20px;
-            box-shadow: 0 10px 30px rgba(35, 49, 38, 0.08);
+            border-radius: 12px;
+            padding: 18px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
           }}
-          h1 {{ margin: 0 0 8px; font-size: 32px; }}
-          p, .meta, .note {{ color: var(--muted); line-height: 1.45; }}
-          .layout {{ display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr); gap: 18px; align-items: start; }}
-          .stack {{ display: grid; gap: 14px; }}
-          label {{ display: grid; gap: 6px; font-weight: 600; }}
+          h1 {{ margin: 0 0 4px; font-size: 28px; font-weight: 650; }}
+          h2 {{ margin: 0 0 4px; font-size: 16px; font-weight: 650; }}
+          p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 14px; }}
+          .layout {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.85fr); gap: 16px; align-items: start; }}
+          .stack {{ display: grid; gap: 12px; }}
+          .stack.compact {{ gap: 8px; }}
+          label {{ display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }}
           input, textarea {{
             width: 100%;
             border: 1px solid var(--line);
             border-radius: 10px;
-            padding: 12px 14px;
+            padding: 10px 12px;
             background: #fff;
             color: var(--ink);
             font: inherit;
           }}
-          textarea {{ min-height: 92px; resize: vertical; }}
-          .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
-          .actions {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }}
+          input:focus, textarea:focus {{ outline: none; border-color: #b8b8b1; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
+          textarea {{ min-height: 84px; resize: vertical; }}
+          .search-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }}
+          .actions {{ display: grid; gap: 8px; }}
+          .actions.two {{ grid-template-columns: 1fr 1fr; }}
           .conversation-list {{ display: grid; gap: 12px; }}
           .conversation {{
             border: 1px solid var(--line);
-            border-radius: 14px;
-            padding: 14px;
-            background: #fffdf7;
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: #fff;
             display: grid;
-            gap: 10px;
+            gap: 8px;
           }}
-          .conversation.selected {{ border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(47, 94, 67, 0.15); }}
-          .conversation.empty {{ background: #f8f2e6; }}
+          .conversation:hover {{ background: #fafaf9; }}
+          .conversation.selected {{ border-color: #d1d1cb; background: #fafaf9; }}
+          .conversation.empty {{ background: #fafaf9; }}
           .conversation-head {{
             display: flex;
             justify-content: space-between;
-            gap: 12px;
+            gap: 10px;
             align-items: start;
           }}
           .name-link {{
             color: var(--ink);
-            font-size: 18px;
-            font-weight: 700;
+            font-size: 14px;
+            font-weight: 600;
             text-decoration: none;
           }}
           .name-link:hover {{ text-decoration: underline; }}
           .conversation-meta,
           .conversation-foot {{
             color: var(--muted);
-            font-size: 13px;
+            font-size: 12px;
             display: flex;
-            gap: 10px;
+            gap: 8px;
             flex-wrap: wrap;
           }}
+          .dot {{ color: #c1c1bc; }}
           .conversation-preview {{
-            font-size: 15px;
-            line-height: 1.45;
+            font-size: 13px;
+            line-height: 1.5;
+            color: #2b2b28;
           }}
-          .conversation-actions {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }}
           .badge {{
             border-radius: 999px;
-            padding: 6px 10px;
-            font-size: 12px;
-            font-weight: 700;
+            padding: 4px 8px;
+            font-size: 11px;
+            font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            color: #fff;
-            background: #6d7e70;
+            color: #4d4d49;
+            background: var(--soft);
           }}
-          .badge.human {{ background: #8a2f2f; }}
-          .badge.paused {{ background: #9c5c22; }}
-          .badge.bot {{ background: var(--accent); }}
+          .badge.human {{ color: #7a271a; background: #fef3f2; }}
+          .badge.paused {{ color: #8a5b14; background: #fffaeb; }}
+          .badge.bot, .badge.neutral {{ color: #3f3f3a; background: var(--soft); }}
+          .status-row {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
           button {{
             width: 100%;
             border: 0;
             border-radius: 10px;
-            padding: 12px 14px;
+            padding: 10px 12px;
             background: var(--accent);
             color: #fff;
             font: inherit;
             font-weight: 600;
             cursor: pointer;
           }}
-          button.secondary {{ background: #6d7e70; }}
-          button.warn {{ background: var(--warn); }}
-          .banner, .error {{
-            border-radius: 12px;
-            padding: 12px 14px;
-            margin-bottom: 14px;
+          button.secondary {{ background: #3b3b38; }}
+          button.ghost {{
+            background: #fff;
+            color: var(--ink);
+            border: 1px solid var(--line);
           }}
-          .banner {{ background: #edf6ef; color: #214a33; }}
-          .error {{ background: #f9e6e6; color: var(--danger); }}
-          .label {{ font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }}
-          .status {{ font-size: 28px; margin-top: 6px; text-transform: lowercase; }}
+          button.small {{ width: auto; justify-self: start; }}
+          .banner, .error {{
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            font-size: 13px;
+          }}
+          .banner {{ background: #f4f4f2; color: #3b3b38; }}
+          .error {{ background: #fef3f2; color: var(--danger); }}
+          .label {{ font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }}
           .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
           form.inline {{ margin: 0; }}
           @media (max-width: 900px) {{
             .layout {{ grid-template-columns: 1fr; }}
           }}
           @media (max-width: 640px) {{
-            .actions, .conversation-actions, .row {{ grid-template-columns: 1fr; }}
+            .actions.two, .search-row {{ grid-template-columns: 1fr; }}
           }}
         </style>
       </head>

@@ -731,7 +731,7 @@ async def test_beforest_admin_page_renders_recent_conversations(
 
     body = response.body.decode("utf-8")
     assert response.status_code == 200
-    assert "Search Conversations" in body
+    assert "Search conversations" in body
     assert "Aditi" in body
     assert "aditi.travels" in body
     assert "Take Over" in body
