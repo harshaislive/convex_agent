@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import httpx
-
 import langsmith
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -381,7 +380,7 @@ def test_info(test_client, mock_settings) -> None:
 
 
 def test_build_manychat_content_includes_buttons_for_urls() -> None:
-    from service.service import _build_manychat_content, _build_manychat_messages
+    from service.service import _build_manychat_content
 
     content = _build_manychat_content(
         "Visit https://experiences.beforest.co/retreat and https://bewild.life/shop"
@@ -471,6 +470,34 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     assert len(result) <= 220
 
 
+def test_enforce_current_experiences_freshness_rewrites_past_live_claim() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "What experiences are currently live?"
+    stale_reply = (
+        "Several immersive experiences are currently live for booking: "
+        "Starry Nights (Dec 14, 2025), Family Roots (Jan 4, 2026), "
+        "Coffee Safari (Jan 26, 2026)."
+    )
+
+    result = _enforce_current_experiences_freshness(message, stale_reply)
+
+    assert "can't confirm live experience dates" in result
+    assert "https://experiences.beforest.co" in result
+    assert "Dec 14, 2025" not in result
+
+
+def test_enforce_current_experiences_freshness_keeps_future_live_claim() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "What experiences are currently live?"
+    valid_reply = "An upcoming experience is currently live for booking on Jan 26, 2099."
+
+    result = _enforce_current_experiences_freshness(message, valid_reply)
+
+    assert result == valid_reply
+
+
 @patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 def test_beforest_reply_clamps_long_reply(
@@ -494,5 +521,39 @@ def test_beforest_reply_clamps_long_reply(
 
     assert response.status_code == 200
     payload = response.json()
+    assert len(payload["reply"]) <= 220
+    assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
+
+
+@patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+def test_beforest_reply_rewrites_stale_current_experiences_reply(
+    mock_save_beforest_event,
+    mock_load_beforest_history,
+    test_client,
+):
+    stale_reply = (
+        "Several immersive experiences are currently live for booking: "
+        "Starry Nights in Hyderabad (Dec 14, 2025), "
+        "Family Roots in Coorg (Jan 4, 2026), and "
+        "Coffee Safari in Coorg (Jan 26, 2026)."
+    )
+    mock_load_beforest_history.return_value = []
+
+    beforest_agent = AsyncMock()
+    beforest_agent.ainvoke.return_value = [
+        ("values", {"messages": [AIMessage(content=stale_reply)]})
+    ]
+
+    with patch("service.service.get_agent", return_value=beforest_agent):
+        response = test_client.post(
+            "/beforest/reply",
+            json={"message": "What experiences are currently live?", "push_to_manychat": False},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "https://experiences.beforest.co" in payload["reply"]
+    assert "Dec 14, 2025" not in payload["reply"]
     assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]

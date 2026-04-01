@@ -8,6 +8,7 @@ from agents.beforest_tools import (
     _score_text,
     browse_beforest_page,
     fetch_beforest_markdown,
+    search_beforest_experiences,
 )
 
 
@@ -103,3 +104,45 @@ def test_score_text_matches_related_word_forms():
 
     assert founder_score > 0
     assert overview_score > 0
+
+
+@patch("agents.beforest_tools._load_live_search_pages")
+def test_search_beforest_experiences_filters_past_dated_results_for_current_queries(mock_pages):
+    mock_pages.return_value = [
+        {
+            "host": "experiences.beforest.co",
+            "title": "Past event",
+            "text": "This is currently live for booking on Dec 14, 2000.",
+            "url": "https://experiences.beforest.co/past-event",
+        },
+        {
+            "host": "experiences.beforest.co",
+            "title": "Upcoming event",
+            "text": "This is currently live for booking on Jan 26, 2099.",
+            "url": "https://experiences.beforest.co/upcoming-event",
+        },
+    ]
+
+    results = search_beforest_experiences.invoke({"query": "What experiences are currently live?"})
+    urls = [str(item.get("url", "")) for item in results if isinstance(item, dict)]
+
+    assert "https://experiences.beforest.co/upcoming-event" in urls
+    assert "https://experiences.beforest.co/past-event" not in urls
+
+
+@patch("agents.beforest_tools._load_live_search_pages")
+def test_search_beforest_experiences_returns_fallback_when_no_upcoming_dates(mock_pages):
+    mock_pages.return_value = [
+        {
+            "host": "experiences.beforest.co",
+            "title": "Past event only",
+            "text": "Several experiences are currently live for booking: Dec 14, 2000.",
+            "url": "https://experiences.beforest.co/past-only",
+        }
+    ]
+
+    results = search_beforest_experiences.invoke({"query": "What experiences are currently live?"})
+
+    assert len(results) == 1
+    assert results[0]["source"] == "Live experiences status"
+    assert results[0]["url"] == "https://experiences.beforest.co/"

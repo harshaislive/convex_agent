@@ -5,7 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
 
@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -25,6 +24,7 @@ from langfuse.langchain import (
 from langgraph.types import Command, Interrupt
 from langsmith import Client as LangsmithClient
 from langsmith import uuid7
+from pydantic import BaseModel, Field
 
 from agents import DEFAULT_AGENT, AgentGraph, get_agent, get_all_agent_info, load_agent
 from agents.beforest_tools import get_knowledge_source_status
@@ -126,6 +126,119 @@ class BeforestReplyResponse(BaseModel):
 
 BEFOREST_DM_TARGET_LIMIT = 220
 BEFOREST_DM_MAX_SENTENCES = 2
+_CURRENT_EXPERIENCE_QUERY_HINTS = (
+    "current",
+    "currently",
+    "live",
+    "right now",
+    "now",
+    "today",
+    "upcoming",
+    "available",
+)
+_CURRENT_EXPERIENCE_REPLY_HINTS = (
+    "currently live",
+    "live for booking",
+    "currently available",
+    "available now",
+    "right now",
+)
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+_MONTH_DATE_RE = re.compile(
+    r"\b("
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?(?:\s+(\d{4}))?\b",
+    flags=re.IGNORECASE,
+)
+_ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+
+
+def _is_current_experiences_query(message: str) -> bool:
+    lowered = message.lower()
+    if "experience" not in lowered and "retreat" not in lowered and "workshop" not in lowered:
+        return False
+    return any(hint in lowered for hint in _CURRENT_EXPERIENCE_QUERY_HINTS)
+
+
+def _reply_claims_current_live(reply_text: str) -> bool:
+    lowered = reply_text.lower()
+    return any(hint in lowered for hint in _CURRENT_EXPERIENCE_REPLY_HINTS)
+
+
+def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
+    parsed_dates: list[date] = []
+    for match in _ISO_DATE_RE.finditer(text):
+        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        try:
+            parsed_dates.append(date(year, month, day))
+        except ValueError:
+            continue
+
+    for match in _MONTH_DATE_RE.finditer(text):
+        month_key = match.group(1).lower()
+        month = _MONTH_NAME_TO_NUMBER.get(month_key)
+        if month is None:
+            continue
+        day = int(match.group(2))
+        raw_year = match.group(3)
+        year = int(raw_year) if raw_year else today.year
+        try:
+            parsed_date = date(year, month, day)
+        except ValueError:
+            continue
+        if raw_year is None and parsed_date < today:
+            try:
+                parsed_date = date(year + 1, month, day)
+            except ValueError:
+                continue
+        parsed_dates.append(parsed_date)
+    return parsed_dates
+
+
+def _enforce_current_experiences_freshness(message: str, reply_text: str) -> str:
+    if not _is_current_experiences_query(message):
+        return reply_text
+    if not _reply_claims_current_live(reply_text):
+        return reply_text
+
+    today = datetime.now(UTC).date()
+    parsed_dates = _extract_dates_from_text(reply_text, today=today)
+    if not parsed_dates:
+        return reply_text
+    if any(parsed_date >= today for parsed_date in parsed_dates):
+        return reply_text
+
+    return (
+        "I can't confirm live experience dates here right now. "
+        "Please check https://experiences.beforest.co for the latest upcoming listings."
+    )
 
 
 def _clamp_beforest_dm_reply(text: str) -> str:
@@ -474,7 +587,9 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
     else:
         raise HTTPException(status_code=500, detail="Unexpected response type")
 
-    reply_text = _clamp_beforest_dm_reply(output.content)
+    reply_text = _clamp_beforest_dm_reply(
+        _enforce_current_experiences_freshness(request.message, output.content)
+    )
 
     config_payload = kwargs.get("config", {})
     configurable = (

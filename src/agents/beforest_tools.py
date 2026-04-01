@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, date, datetime
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin, urlparse
@@ -97,6 +97,51 @@ _SEMANTIC_TERM_VARIANTS = {
     "hospitality": ("hospitality", "stay", "stays", "accommodation"),
     "experience": ("experience", "experiences", "retreat", "retreats", "workshop", "workshops"),
 }
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+_MONTH_DATE_RE = re.compile(
+    r"\b("
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,)?(?:\s+(\d{4}))?\b",
+    flags=re.IGNORECASE,
+)
+_ISO_DATE_RE = re.compile(r"\b(20\d{2})-(\d{2})-(\d{2})\b")
+_CURRENT_EXPERIENCE_QUERY_HINTS = (
+    "current",
+    "currently",
+    "live",
+    "right now",
+    "now",
+    "today",
+    "upcoming",
+    "available",
+)
 
 
 def _term_variants(term: str) -> list[str]:
@@ -251,6 +296,58 @@ def _build_snippet(text: str, query: str, limit: int = 900) -> str:
     return compact[:limit].strip()
 
 
+def _is_current_experiences_query(query: str) -> bool:
+    lowered = query.lower()
+    if "experience" not in lowered and "retreat" not in lowered and "workshop" not in lowered:
+        return False
+    return any(hint in lowered for hint in _CURRENT_EXPERIENCE_QUERY_HINTS)
+
+
+def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
+    parsed_dates: list[date] = []
+    for match in _ISO_DATE_RE.finditer(text):
+        year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+        try:
+            parsed_dates.append(date(year, month, day))
+        except ValueError:
+            continue
+
+    for match in _MONTH_DATE_RE.finditer(text):
+        month_key = match.group(1).lower()
+        month = _MONTH_NAME_TO_NUMBER.get(month_key)
+        if month is None:
+            continue
+        day = int(match.group(2))
+        raw_year = match.group(3)
+        year = int(raw_year) if raw_year else today.year
+        try:
+            parsed_date = date(year, month, day)
+        except ValueError:
+            continue
+        if raw_year is None and parsed_date < today:
+            try:
+                parsed_date = date(year + 1, month, day)
+            except ValueError:
+                continue
+        parsed_dates.append(parsed_date)
+    return parsed_dates
+
+
+def _page_has_upcoming_experience_date(page: dict[str, object], *, today: date) -> bool | None:
+    page_text = "\n".join(
+        [
+            str(page.get("title", "")),
+            str(page.get("text", "")),
+            str(page.get("markdown", "")),
+            str(page.get("url", "")),
+        ]
+    )
+    parsed_dates = _extract_dates_from_text(page_text, today=today)
+    if not parsed_dates:
+        return None
+    return any(parsed_date >= today for parsed_date in parsed_dates)
+
+
 def _outline_request(path: str, payload: dict[str, object]) -> dict[str, object]:
     api_url = settings.OUTLINE_API_URL
     token = settings.OUTLINE_API_TOKEN
@@ -334,7 +431,7 @@ def _build_outline_chunks(documents: list[dict[str, object]]) -> list[dict[str, 
 
 
 def _load_outline_index() -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     fetched_at = float(_OUTLINE_CACHE.get("fetched_at", 0.0))
     cached_docs = _OUTLINE_CACHE.get("docs", [])
     cached_chunks = _OUTLINE_CACHE.get("chunks", [])
@@ -536,7 +633,7 @@ def _likely_detail_link(url: str) -> bool:
 
 
 def _load_live_search_pages() -> list[dict[str, object]]:
-    now = datetime.now(timezone.utc).timestamp()
+    now = datetime.now(UTC).timestamp()
     cached_pages = _LIVE_SEARCH_CACHE.get("pages", [])
     fetched_at = float(_LIVE_SEARCH_CACHE.get("fetched_at", 0.0))
     if (
@@ -706,6 +803,8 @@ def search_beforest_live(query: str, max_results: int = 5) -> list[dict[str, str
 @tool
 def search_beforest_experiences(query: str, max_results: int = 5) -> list[dict[str, str | int]]:
     """Search live Beforest experiences content with stronger crawling and ranking."""
+    requires_fresh_dates = _is_current_experiences_query(query)
+    today = datetime.now(UTC).date()
     pages = [
         page
         for page in _load_live_search_pages()
@@ -717,6 +816,12 @@ def search_beforest_experiences(query: str, max_results: int = 5) -> list[dict[s
         text = str(page.get("text", ""))
         url = str(page.get("url", ""))
         score = _score_text(query, title) * 5 + _score_text(query, text)
+        if requires_fresh_dates:
+            upcoming_status = _page_has_upcoming_experience_date(page, today=today)
+            if upcoming_status is False:
+                continue
+            if upcoming_status is True:
+                score += 8
         if any(token in url.lower() for token in ("experience", "retreat", "event", "workshop")):
             score += 2
         if score > 0:
@@ -733,6 +838,19 @@ def search_beforest_experiences(query: str, max_results: int = 5) -> list[dict[s
                 "url": str(page.get("url", "")),
             }
         )
+    if requires_fresh_dates and not results:
+        return [
+            {
+                "source": "Live experiences status",
+                "score": 1,
+                "snippet": (
+                    "No confirmed upcoming dated experiences were found in the latest crawl. "
+                    "Route users to experiences.beforest.co for the newest listings instead of "
+                    "naming past events as currently live."
+                ),
+                "url": EXPERIENCES_BASE_URL,
+            }
+        ]
     _log_knowledge_trace(
         "Experience results: " + ", ".join(str(item.get("source", "")) for item in results)
     )

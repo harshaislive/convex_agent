@@ -1,30 +1,28 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains the application code. Key areas are `src/agents/` for agent definitions, `src/service/` for the FastAPI service, `src/client/` for the reusable client, `src/core/` for settings and shared runtime logic, and `src/schema/` for request/response models. Entry points such as `src/run_service.py` and `src/streamlit_app.py` are kept at the top of `src/`.
+Core application code lives in `src/`. Use `src/agents/` for agent implementations and agent-specific helpers, `src/service/` for the FastAPI API layer, `src/client/` for the reusable client, `src/core/` for settings and LLM wiring, `src/schema/` for shared models, and `src/voice/` or `src/memory/` for subsystem code. Entry scripts such as `src/run_service.py`, `src/run_client.py`, and `src/streamlit_app.py` stay at the top of `src/`.
 
-`tests/` mirrors the source layout with unit and integration coverage, including `tests/integration/` for docker-backed end-to-end checks. Supporting material lives in `docs/`, `docker/`, `media/`, and `data/`. Keep secrets out of Git; use `.env` and `privatecredentials/`.
+Tests mirror the source tree under `tests/` and include focused suites like `tests/service/`, `tests/agents/`, and `tests/integration/`. Reference material lives in `docs/`, container assets in `docker/`, and local-only secrets in `privatecredentials/`.
 
 ## Build, Test, and Development Commands
-Use `uv` for dependency management and task execution:
-
-- `uv sync --frozen`: install locked dependencies into `.venv`.
+- `uv sync --frozen`: install the locked dependencies into `.venv`.
 - `uv run python src/run_service.py`: start the FastAPI service locally.
-- `uv run streamlit run src/streamlit_app.py`: launch the Streamlit UI.
-- `uv run pytest`: run the test suite.
-- `uv run pytest tests/integration -v --run-docker`: run docker-dependent integration tests.
-- `uv run ruff check . && uv run ruff format --check .`: lint and verify formatting.
+- `uv run streamlit run src/streamlit_app.py`: run the Streamlit chat UI.
+- `uv run pytest`: run the default test suite.
+- `uv run pytest tests/integration -v --run-docker`: run Docker-backed end-to-end tests.
+- `uv run ruff check .`: lint and sort imports.
 - `uv run mypy src/`: run static type checks.
 - `docker compose watch`: run the full local stack with live reload.
 
 ## Coding Style & Naming Conventions
-Target Python 3.11+ with 4-space indentation and a maximum line length of 100. Ruff handles import sorting and formatting; run pre-commit before pushing with `uv run pre-commit run --all-files`. Use `snake_case` for modules, functions, and variables; `PascalCase` for classes; and clear agent names matching their route or domain, such as `beforest_agent.py`.
+Target Python 3.11+ with 4-space indentation and a 100-character line limit. Ruff is the primary style gate; keep imports normalized and avoid unused symbols. Use `snake_case` for modules, files, functions, and variables, `PascalCase` for classes, and descriptive agent filenames such as `beforest_agent.py` or `github_mcp_agent.py`.
 
 ## Testing Guidelines
-Write tests with `pytest`; async tests are supported via `pytest-asyncio`. Place tests alongside the matching domain under `tests/` and name files `test_<feature>.py`. CI runs `pytest --cov=src/ --cov-report=xml`, so new work should include coverage for success paths and edge cases.
+Use `pytest` with `pytest-asyncio` for async coverage. Place tests beside the matching domain and name files `test_<feature>.py`. New behavior should include success-path and failure-path assertions; service changes should usually add request/response coverage.
 
 ## Commit & Pull Request Guidelines
-Recent commits use short, imperative summaries such as `Add stronger live search for Beforest sites`. Follow that pattern: one-line subject, present tense, specific scope. PRs should explain behavior changes, call out config or env updates, link related issues, and include screenshots when UI or Streamlit behavior changes. Confirm Ruff, Mypy, and Pytest pass before opening the PR.
+Recent history uses short imperative subjects such as `Clamp Beforest DM replies` and `Fix ManyChat URL cleanup helper`. Keep commit titles specific and present tense. PRs should summarize behavior changes, note any `.env` or credential impacts, link related issues, and include screenshots for Streamlit or UX changes.
 
 ## Security & Configuration Tips
-Copy `.env.example` when setting up locally and never commit real credentials. Treat `privatecredentials/` as local-only storage for file-based secrets and certificates.
+Copy `.env.example` to `.env` for local setup and never commit real secrets. Treat `privatecredentials/` as local-only storage for certificates and provider credential files.
