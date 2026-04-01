@@ -1317,6 +1317,70 @@ def _extract_urls(text: str) -> list[str]:
     return [match.rstrip(".,!?") for match in re.findall(r"https://[^\s)]+", text)]
 
 
+def _tracking_value(value: Any) -> str:
+    normalized = re.sub(r"\s+", "_", str(value or "").strip())
+    normalized = re.sub(r"[^A-Za-z0-9_.-]", "", normalized)
+    return normalized[:80]
+
+
+def _enrich_typeform_url(
+    url: str,
+    *,
+    subscriber_id: str | None = None,
+    subscriber_data: dict[str, Any] | None = None,
+) -> str:
+    lower_url = url.lower()
+    if "form.typeform.com" not in lower_url:
+        return url
+
+    subscriber_data = subscriber_data or {}
+    username = _tracking_value(
+        subscriber_data.get("username")
+        or subscriber_data.get("instagram_username")
+        or subscriber_data.get("contact_username")
+    )
+    ig_user_id = _tracking_value(
+        subscriber_data.get("instagram_user_id")
+        or subscriber_data.get("instagramUserId")
+        or subscriber_data.get("user_id")
+        or subscriber_data.get("userId")
+    )
+    contact_tracking_id = _tracking_value(
+        subscriber_id
+        or subscriber_data.get("contact_id")
+        or subscriber_data.get("contactId")
+        or subscriber_data.get("subscriber_id")
+        or subscriber_data.get("subscriberId")
+    )
+    utm_content = username or contact_tracking_id or ig_user_id
+
+    parsed = urllib.parse.urlsplit(url)
+    query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    query["utm_source"] = "instagram"
+    query["utm_medium"] = "dm_bot"
+    query["utm_campaign"] = query.get("utm_campaign") or "beforest_collective_interest"
+    if utm_content:
+        query["utm_content"] = utm_content
+
+    fragment = dict(urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True))
+    if username:
+        fragment["ig_username"] = username
+    if contact_tracking_id:
+        fragment["manychat_contact_id"] = contact_tracking_id
+    if ig_user_id:
+        fragment["ig_user_id"] = ig_user_id
+
+    return urllib.parse.urlunsplit(
+        (
+            parsed.scheme,
+            parsed.netloc,
+            parsed.path,
+            urllib.parse.urlencode(query, doseq=True),
+            urllib.parse.urlencode(fragment, doseq=True),
+        )
+    )
+
+
 def _remove_urls_from_text(text: str) -> str:
     cleaned = re.sub(r"\s*https://[^\s)]+", "", text)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
@@ -1389,9 +1453,23 @@ def _split_manychat_text(text: str, *, limit: int = MANYCHAT_MAX_TEXT_LENGTH) ->
     return chunks[:MANYCHAT_MAX_MESSAGES]
 
 
-def _build_manychat_messages(reply_text: str, *, include_buttons: bool = True) -> list[dict[str, Any]]:
+def _build_manychat_messages(
+    reply_text: str,
+    *,
+    include_buttons: bool = True,
+    subscriber_id: str | None = None,
+    subscriber_data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     buttons = [
-        {"type": "url", "caption": _button_caption_for_url(url), "url": url}
+        {
+            "type": "url",
+            "caption": _button_caption_for_url(url),
+            "url": _enrich_typeform_url(
+                url,
+                subscriber_id=subscriber_id,
+                subscriber_data=subscriber_data,
+            ),
+        }
         for url in _extract_urls(reply_text)[:3]
     ]
     base_text = _remove_urls_from_text(reply_text) if include_buttons and buttons else reply_text
@@ -1402,10 +1480,21 @@ def _build_manychat_messages(reply_text: str, *, include_buttons: bool = True) -
     return messages
 
 
-def _build_manychat_content(reply_text: str, *, include_buttons: bool = True) -> dict[str, Any]:
+def _build_manychat_content(
+    reply_text: str,
+    *,
+    include_buttons: bool = True,
+    subscriber_id: str | None = None,
+    subscriber_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "type": settings.MANYCHAT_CHANNEL,
-        "messages": _build_manychat_messages(reply_text, include_buttons=include_buttons),
+        "messages": _build_manychat_messages(
+            reply_text,
+            include_buttons=include_buttons,
+            subscriber_id=subscriber_id,
+            subscriber_data=subscriber_data,
+        ),
         "actions": [],
         "quick_replies": [],
     }
@@ -1435,12 +1524,27 @@ async def _post_manychat_content(
     )
 
 
-async def _push_manychat_reply(subscriber_id: str, reply_text: str) -> None:
+async def _push_manychat_reply(
+    subscriber_id: str,
+    reply_text: str,
+    *,
+    subscriber_data: dict[str, Any] | None = None,
+) -> None:
     if not settings.MANYCHAT_API_TOKEN:
         return
 
-    rich_content = _build_manychat_content(reply_text, include_buttons=True)
-    plain_content = _build_manychat_content(reply_text, include_buttons=False)
+    rich_content = _build_manychat_content(
+        reply_text,
+        include_buttons=True,
+        subscriber_id=subscriber_id,
+        subscriber_data=subscriber_data,
+    )
+    plain_content = _build_manychat_content(
+        reply_text,
+        include_buttons=False,
+        subscriber_id=subscriber_id,
+        subscriber_data=subscriber_data,
+    )
 
     async with httpx.AsyncClient(timeout=15) as client:
         response = await _post_manychat_content(
@@ -1564,7 +1668,11 @@ async def _deliver_beforest_reply(
         automation_state=automation_state,
     )
     if manychat_subscriber_id:
-        await _push_manychat_reply(manychat_subscriber_id, reply_text)
+        await _push_manychat_reply(
+            manychat_subscriber_id,
+            reply_text,
+            subscriber_data=request.subscriber_data,
+        )
     return reply_text
 
 

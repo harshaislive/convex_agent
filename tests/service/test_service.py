@@ -405,6 +405,24 @@ def test_build_manychat_content_uses_show_interest_caption_for_typeform() -> Non
     assert content["messages"][0]["buttons"][0]["caption"] == "Show Interest"
 
 
+def test_build_manychat_content_enriches_typeform_tracking() -> None:
+    from service.service import _build_manychat_content
+
+    content = _build_manychat_content(
+        "Apply here https://form.typeform.com/to/hbDB2ybS?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx#current_page=xxxxx",
+        subscriber_id="771052958",
+        subscriber_data={"username": "harsha.live", "instagram_user_id": "ig-7710"},
+    )
+
+    url = content["messages"][0]["buttons"][0]["url"]
+    assert "utm_source=instagram" in url
+    assert "utm_medium=dm_bot" in url
+    assert "utm_content=harsha.live" in url
+    assert "ig_username=harsha.live" in url
+    assert "manychat_contact_id=771052958" in url
+    assert "ig_user_id=ig-7710" in url
+
+
 @pytest.mark.asyncio
 async def test_push_manychat_reply_retries_without_buttons_on_400() -> None:
     from service.service import _push_manychat_reply
@@ -842,10 +860,18 @@ def test_beforest_operating_context_message_includes_collective_rules() -> None:
     assert "Mumbai, Poomaale 2.0, Bhopal, Hammiyala" in result.content
     assert "hello@beforest.co" in result.content
     assert "show interest" in result.content
+    assert "Default collective routing: send the relevant collective page first." in result.content
+    assert "form.typeform.com/to/CYae8hmZ" not in result.content
+
+
+def test_beforest_operating_context_message_includes_typeform_for_high_intent() -> None:
+    from agents.beforest_agent import _beforest_operating_context_message
+
+    result = _beforest_operating_context_message("I already explored Bhopal. Can you send the form?")
+
+    assert result is not None
     assert "form.typeform.com/to/CYae8hmZ" in result.content
     assert "form.typeform.com/to/i8eBLQkz" in result.content
-    assert "form.typeform.com/to/hbDB2ybS" in result.content
-    assert "form.typeform.com/to/kfcjiXxR" in result.content
 
 
 @pytest.mark.asyncio

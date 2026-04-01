@@ -39,6 +39,19 @@ _COLLECTIVE_QUERY_TERMS = (
     "show interest",
     "invite",
 )
+_COLLECTIVE_SIGNUP_QUERY_TERMS = (
+    "apply",
+    "application",
+    "form",
+    "typeform",
+    "show interest",
+    "interested",
+    "keen",
+    "ready",
+    "next step",
+    "next steps",
+    "sign me up",
+)
 _CONTACT_QUERY_TERMS = (
     "contact",
     "email",
@@ -140,6 +153,8 @@ def _beforest_operating_context_message(question: str) -> SystemMessage | None:
     ):
         return None
 
+    signup_intent = any(term in lowered for term in _COLLECTIVE_SIGNUP_QUERY_TERMS)
+
     lines = [
         "Beforest operating guidance.",
         "Use these canonical fast links when routing users:",
@@ -159,17 +174,24 @@ def _beforest_operating_context_message(question: str) -> SystemMessage | None:
         f"- Hammiyala Collective: {_FAST_LINKS['hammiyala_collective']}",
         f"- Bhopal Collective: {_FAST_LINKS['bhopal_collective']}",
         "For collective interest, use 'show interest' language. Do not assume pages say 'get invite'.",
-        "For specific collective sign-up interest, use these exact links when relevant:",
-        f"- Bhopal: {_COLLECTIVE_INTEREST_LINKS['bhopal']}",
-        f"- Poomaale 2.0: {_COLLECTIVE_INTEREST_LINKS['poomaale 2.0']}",
-        f"- Hammiyala: {_COLLECTIVE_INTEREST_LINKS['hammiyala']}",
-        f"- Mumbai: {_COLLECTIVE_INTEREST_LINKS['mumbai']}",
+        "Default collective routing: send the relevant collective page first.",
+        "Only send the Typeform when the user is clearly high-intent: they ask to apply, show interest, want the next step, or seem ready after already exploring.",
         "Social links:",
         f"- Beforest Instagram: {_FAST_LINKS['beforest_instagram']}",
         f"- Beforest Facebook: {_FAST_LINKS['beforest_facebook']}",
         f"- Bewild Instagram: {_FAST_LINKS['bewild_instagram']}",
         "Default non-signup contact route is hello@beforest.co or https://beforest.co/call-mail/.",
     ]
+    if signup_intent:
+        lines.extend(
+            [
+                "The user appears high-intent for a collective sign-up. Use these exact Typeform links when needed:",
+                f"- Bhopal: {_COLLECTIVE_INTEREST_LINKS['bhopal']}",
+                f"- Poomaale 2.0: {_COLLECTIVE_INTEREST_LINKS['poomaale 2.0']}",
+                f"- Hammiyala: {_COLLECTIVE_INTEREST_LINKS['hammiyala']}",
+                f"- Mumbai: {_COLLECTIVE_INTEREST_LINKS['mumbai']}",
+            ]
+        )
     return SystemMessage(content="\n".join(lines))
 
 
