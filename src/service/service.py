@@ -375,7 +375,6 @@ def _render_beforest_admin_page(
           }}
           .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; grid-area: toggles; }}
           .toggle {{
-            width: auto;
             border: 1px solid var(--line);
             border-radius: 999px;
             padding: 6px 10px;
@@ -415,6 +414,11 @@ def _render_beforest_admin_page(
             cursor: pointer;
           }}
           button.secondary {{ background: #3b3b38; }}
+          .toggle {{
+            width: auto;
+            min-width: 0;
+            flex: 0 0 auto;
+          }}
           .banner, .error {{
             border-radius: 10px;
             padding: 10px 12px;
