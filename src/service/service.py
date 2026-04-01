@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
@@ -24,7 +25,13 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
@@ -69,6 +76,11 @@ from service.utils import (
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+MEDIA_DIR = REPO_ROOT / "media"
+BEFOREST_FAVICON_ICO_PATH = MEDIA_DIR / "favicon.ico"
+BEFOREST_FAVICON_PNG_PATH = MEDIA_DIR / "beforest-favicon.png"
+BEFOREST_OG_IMAGE_PATH = MEDIA_DIR / "beforest-og.jpg"
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -154,10 +166,16 @@ def _render_beforest_admin_page(
     recent_conversations: list[dict[str, Any]] | None = None,
     message: str = "",
     error: str = "",
+    page_url: str = "",
+    favicon_url: str = "/favicon.ico",
+    og_image_url: str = "/og/beforest-og.jpg",
 ) -> str:
     safe_search_query = _escape_html(search_query)
     safe_message = _escape_html(message)
     safe_error = _escape_html(error)
+    safe_page_url = _escape_html(page_url)
+    safe_favicon_url = _escape_html(favicon_url)
+    safe_og_image_url = _escape_html(og_image_url)
     conversation_rows = ""
     for item in recent_conversations or []:
         item_contact_id = str(item.get("contactId", "") or "").strip()
@@ -246,6 +264,17 @@ def _render_beforest_admin_page(
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>Beforest Ops</title>
+        <link rel="icon" href="{safe_favicon_url}" sizes="any" />
+        <link rel="apple-touch-icon" href="{safe_favicon_url}" />
+        <meta property="og:title" content="Beforest Ops" />
+        <meta property="og:description" content="Beforest DM inbox and handover controls." />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content="{safe_page_url}" />
+        <meta property="og:image" content="{safe_og_image_url}" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content="Beforest Ops" />
+        <meta name="twitter:description" content="Beforest DM inbox and handover controls." />
+        <meta name="twitter:image" content="{safe_og_image_url}" />
         <style>
           :root {{
             --bg: #f7f7f5;
@@ -1801,6 +1830,16 @@ async def knowledge_health() -> dict[str, object]:
     return get_knowledge_source_status()
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def beforest_favicon() -> FileResponse:
+    return FileResponse(BEFOREST_FAVICON_ICO_PATH, media_type="image/x-icon")
+
+
+@app.get("/og/beforest-og.jpg", include_in_schema=False)
+async def beforest_og_image() -> FileResponse:
+    return FileResponse(BEFOREST_OG_IMAGE_PATH, media_type="image/jpeg")
+
+
 @app.get("/admin/beforest", response_class=HTMLResponse)
 async def beforest_admin_page(
     request: Request,
@@ -1809,6 +1848,10 @@ async def beforest_admin_page(
     message: str = "",
     error: str = "",
 ) -> HTMLResponse:
+    base_url = str(request.base_url).rstrip("/")
+    page_url = str(request.url)
+    favicon_url = f"{base_url}/favicon.ico"
+    og_image_url = f"{base_url}/og/beforest-og.jpg"
     if not _beforest_ops_authenticated(request):
         return HTMLResponse(
             _render_beforest_admin_page(
@@ -1816,6 +1859,9 @@ async def beforest_admin_page(
                 contact_id=contact_id,
                 search_query=q,
                 error=error,
+                page_url=page_url,
+                favicon_url=favicon_url,
+                og_image_url=og_image_url,
             )
         )
 
@@ -1854,6 +1900,9 @@ async def beforest_admin_page(
             recent_conversations=recent_conversations,
             message=message,
             error=error,
+            page_url=page_url,
+            favicon_url=favicon_url,
+            og_image_url=og_image_url,
         )
     )
 

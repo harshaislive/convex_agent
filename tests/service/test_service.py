@@ -705,6 +705,8 @@ async def test_beforest_admin_page_renders_login_form() -> None:
     assert response.status_code == 200
     assert "Beforest Ops" in body
     assert "Enter admin password" in body
+    assert 'property="og:image"' in body
+    assert 'rel="icon"' in body
 
 
 @pytest.mark.asyncio
@@ -846,6 +848,14 @@ async def test_beforest_admin_handover_returns_json_for_fetch_requests(mock_befo
     assert response.body
     assert b'"ok":true' in response.body
     assert b'"handover_status":"paused"' in response.body
+
+
+def test_beforest_brand_asset_paths_exist() -> None:
+    import service.service as svc
+
+    assert svc.BEFOREST_FAVICON_ICO_PATH.exists()
+    assert svc.BEFOREST_FAVICON_PNG_PATH.exists()
+    assert svc.BEFOREST_OG_IMAGE_PATH.exists()
 
 
 def test_beforest_operating_context_message_includes_collective_rules() -> None:
