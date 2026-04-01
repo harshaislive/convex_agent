@@ -192,6 +192,19 @@ def test_supports_beforest_ops_helper() -> None:
     assert _supports_beforest_ops(client) is True
 
 
+def test_beforest_ops_view_requires_password(mock_agent_client, monkeypatch) -> None:
+    monkeypatch.setenv("BEFOREST_OPS_PASSWORD", "secret")
+    at = AppTest.from_file("../../src/streamlit_app.py")
+    at.query_params["view"] = "beforest_ops"
+    at.run()
+
+    assert at.title[0].value == "Beforest Ops"
+    assert at.subheader[0].value == "Beforest Ops Login"
+    assert at.text_input[0].label == "Password"
+    assert len(at.chat_input) == 0
+    assert not at.exception
+
+
 @pytest.fixture
 def multi_agent_messages():
     """Fixture providing reusable messages for multi-agent tests"""
