@@ -126,6 +126,25 @@ def _truncate_beforest_ops_text(value: Any, *, limit: int = 140) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _beforest_admin_status_payload_from_recent_conversations(
+    recent_conversations: list[dict[str, Any]],
+    *,
+    contact_id: str,
+) -> dict[str, Any] | None:
+    if not contact_id:
+        return None
+    for item in recent_conversations:
+        if str(item.get("contactId", "") or "").strip() != contact_id:
+            continue
+        return {
+            "handover_status": item.get("handoverStatus", "bot"),
+            "updated_at": item.get("receivedAt"),
+            "updated_by": item.get("updatedBy", ""),
+            "note": item.get("note", ""),
+        }
+    return None
+
+
 def _render_beforest_admin_page(
     *,
     authenticated: bool,
@@ -1534,15 +1553,25 @@ async def beforest_admin_page(
     except Exception as exc:
         logger.warning("Failed loading Beforest recent conversations: %s", exc)
         error = error or "Inbox data could not be loaded from Convex."
+    status_payload = _beforest_admin_status_payload_from_recent_conversations(
+        recent_conversations,
+        contact_id=contact_id,
+    )
     if contact_id:
-        history_events = await _load_beforest_events_from_convex(contact_id)
-        automation_state = _derive_beforest_automation_state(history_events)
-        status_payload = {
-            "handover_status": automation_state.status if automation_state is not None else "bot",
-            "updated_at": automation_state.updated_at if automation_state is not None else None,
-            "updated_by": automation_state.updated_by if automation_state is not None else "",
-            "note": automation_state.note if automation_state is not None else "",
-        }
+        try:
+            history_events = await _load_beforest_events_from_convex(contact_id)
+        except Exception as exc:
+            logger.warning("Failed loading Beforest contact history for %s: %s", contact_id, exc)
+            history_events = []
+            error = error or "Selected contact details could not be loaded from Convex."
+        if status_payload is None:
+            automation_state = _derive_beforest_automation_state(history_events)
+            status_payload = {
+                "handover_status": automation_state.status if automation_state is not None else "bot",
+                "updated_at": automation_state.updated_at if automation_state is not None else None,
+                "updated_by": automation_state.updated_by if automation_state is not None else "",
+                "note": automation_state.note if automation_state is not None else "",
+            }
     return HTMLResponse(
         _render_beforest_admin_page(
             authenticated=True,
@@ -1595,14 +1624,24 @@ async def beforest_admin_handover(
     if not _beforest_ops_authenticated(request):
         return RedirectResponse("/admin/beforest?error=Please+login+again", status_code=303)
 
-    await beforest_handover(
-        BeforestHandoverRequest(
-            status=status_value,
-            contact_id=contact_id,
-            updated_by=updated_by or "ops",
-            note=note or "",
+    try:
+        await beforest_handover(
+            BeforestHandoverRequest(
+                status=status_value,
+                contact_id=contact_id,
+                updated_by=updated_by or "ops",
+                note=note or "",
+            )
         )
-    )
+    except Exception:
+        logger.exception("Beforest admin handover failed for %s", contact_id)
+        query_params = {"contact_id": contact_id, "error": "Could not update handover status."}
+        if q:
+            query_params["q"] = q
+        return RedirectResponse(
+            f"/admin/beforest?{urllib.parse.urlencode(query_params)}",
+            status_code=303,
+        )
     success_message = f"Updated {contact_id} to {status_value}"
     query_params = {"contact_id": contact_id, "message": success_message}
     if q:
