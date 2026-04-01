@@ -328,21 +328,23 @@ def _render_beforest_admin_page(
           .conversation-row:first-child {{ border-top: 0; }}
           .conversation-row:hover {{ background: #fafaf9; }}
           .conversation-row.selected {{ background: #f7f7f5; }}
-          .row-main {{ min-width: 0; }}
+          .row-main {{ min-width: 0; grid-area: main; }}
           .row-name {{ font-size: 14px; font-weight: 600; }}
           .row-meta,
           .row-time {{
             color: var(--muted);
             font-size: 12px;
           }}
+          .row-time {{ grid-area: time; }}
           .dot {{ color: #c1c1bc; }}
           .row-preview {{
             font-size: 13px;
             line-height: 1.5;
             color: #2b2b28;
             min-width: 0;
+            grid-area: preview;
           }}
-          .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; }}
+          .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; grid-area: toggles; }}
           .toggle {{
             width: auto;
             border: 1px solid var(--line);
@@ -416,14 +418,65 @@ def _render_beforest_admin_page(
           @media (max-width: 900px) {{
             .table-head {{ display: none; }}
             .conversation-row {{
-              grid-template-columns: 1fr;
+              grid-template-columns: minmax(0, 1fr) auto;
+              grid-template-areas:
+                "main toggles"
+                "preview preview"
+                "time time";
+              gap: 8px 10px;
               align-items: start;
             }}
-            .row-toggles {{ justify-content: flex-start; }}
+            .row-preview {{
+              display: -webkit-box;
+              -webkit-line-clamp: 2;
+              -webkit-box-orient: vertical;
+              overflow: hidden;
+            }}
+            .row-toggles {{ justify-content: flex-end; }}
+            .toggle {{
+              padding: 5px 9px;
+              font-size: 11px;
+            }}
           }}
           @media (max-width: 640px) {{
-            .search-row {{ grid-template-columns: 1fr; }}
-            .legend {{ gap: 8px; }}
+            .shell {{
+              margin: 12px auto;
+              padding: 0 10px;
+            }}
+            .panel {{
+              padding: 12px;
+              border-radius: 10px;
+            }}
+            h1 {{ font-size: 22px; }}
+            h2 {{ font-size: 15px; }}
+            .search-row {{ grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }}
+            .search-row button {{
+              width: auto;
+              padding: 10px;
+              min-width: 72px;
+            }}
+            .legend {{
+              gap: 6px;
+              font-size: 11px;
+              padding-bottom: 2px;
+            }}
+            .conversation-row {{
+              padding: 10px;
+              gap: 6px 8px;
+            }}
+            .row-name {{ font-size: 13px; }}
+            .row-meta, .row-time, .row-preview {{ font-size: 11px; }}
+            .row-toggles {{ gap: 4px; }}
+            .toggle {{
+              padding: 4px 8px;
+              font-size: 10px;
+            }}
+            .toast {{
+              left: 10px;
+              right: 10px;
+              bottom: 10px;
+              font-size: 12px;
+            }}
           }}
         </style>
         <script>
