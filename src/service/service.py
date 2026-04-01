@@ -24,7 +24,7 @@ from fastapi import (
     Request,
     status,
 )
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
@@ -230,6 +230,7 @@ def _render_beforest_admin_page(
         <span>Status</span>
       </div>
       <div class="conversation-list">{conversation_rows}</div>
+      <div id="ops-toast" class="toast" aria-live="polite"></div>
     </section>
     """
 
@@ -365,6 +366,24 @@ def _render_beforest_admin_page(
           .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
           form.inline {{ margin: 0; }}
           .empty-state {{ padding: 18px; color: var(--muted); font-size: 13px; background: #fff; }}
+          .toast {{
+            position: fixed;
+            right: 18px;
+            bottom: 18px;
+            background: #191919;
+            color: #fff;
+            border-radius: 10px;
+            padding: 10px 12px;
+            font-size: 13px;
+            opacity: 0;
+            transform: translateY(6px);
+            pointer-events: none;
+            transition: opacity 120ms ease, transform 120ms ease;
+          }}
+          .toast.show {{
+            opacity: 1;
+            transform: translateY(0);
+          }}
           @media (max-width: 900px) {{
             .table-head {{ display: none; }}
             .conversation-row {{
@@ -382,13 +401,57 @@ def _render_beforest_admin_page(
             const form = document.querySelector("form[data-live-search='true']");
             if (!form) return;
             const input = form.querySelector("input[name='q']");
-            if (!input) return;
-            let timer = null;
-            input.addEventListener("input", function () {{
-              window.clearTimeout(timer);
-              timer = window.setTimeout(function () {{
-                form.requestSubmit();
-              }}, 220);
+            if (input) {{
+              let timer = null;
+              input.addEventListener("input", function () {{
+                window.clearTimeout(timer);
+                timer = window.setTimeout(function () {{
+                  form.requestSubmit();
+                }}, 220);
+              }});
+            }}
+
+            const toast = document.getElementById("ops-toast");
+            let toastTimer = null;
+            function showToast(message, isError) {{
+              if (!toast) return;
+              toast.textContent = message;
+              toast.style.background = isError ? "#b42318" : "#191919";
+              toast.classList.add("show");
+              window.clearTimeout(toastTimer);
+              toastTimer = window.setTimeout(function () {{
+                toast.classList.remove("show");
+              }}, 1800);
+            }}
+
+            document.querySelectorAll("form.conversation-row").forEach(function (rowForm) {{
+              rowForm.addEventListener("submit", async function (event) {{
+                event.preventDefault();
+                const submitter = event.submitter;
+                if (!submitter) return;
+                const formData = new FormData(rowForm);
+                formData.set("status", submitter.value);
+                try {{
+                  const response = await fetch(rowForm.action, {{
+                    method: "POST",
+                    body: formData,
+                    headers: {{
+                      "x-requested-with": "fetch"
+                    }}
+                  }});
+                  const payload = await response.json();
+                  if (!response.ok || !payload.ok) {{
+                    showToast(payload.error || "Could not update handover status.", true);
+                    return;
+                  }}
+                  rowForm.querySelectorAll(".toggle").forEach(function (button) {{
+                    button.classList.toggle("active", button.value === payload.handover_status);
+                  }});
+                  showToast("Status updated", false);
+                }} catch (_error) {{
+                  showToast("Could not update handover status.", true);
+                }}
+              }});
             }});
           }});
         </script>
@@ -1176,8 +1239,6 @@ async def _save_beforest_event_to_convex(
         "message": inbound_message,
         "receivedAt": now,
         "agentReplied": agent_replied,
-        "agentReplyAt": now if agent_replied else None,
-        "agentReplyText": reply_text,
         "lastReplyType": "agent" if agent_replied else "user",
         "rawPayload": {
             "userId": user_id,
@@ -1186,6 +1247,10 @@ async def _save_beforest_event_to_convex(
             "subscriberData": subscriber_data,
         },
     }
+    if agent_replied:
+        payload["agentReplyAt"] = now
+    if reply_text:
+        payload["agentReplyText"] = reply_text
     if session_state is not None:
         payload["rawPayload"]["session"] = asdict(session_state)
     if automation_state is not None:
@@ -1584,7 +1649,7 @@ async def beforest_admin_logout() -> RedirectResponse:
     return response
 
 
-@app.post("/admin/beforest/handover")
+@app.post("/admin/beforest/handover", response_model=None)
 async def beforest_admin_handover(
     request: Request,
     contact_id: str = Form(...),
@@ -1592,8 +1657,11 @@ async def beforest_admin_handover(
     updated_by: str = Form(""),
     note: str = Form(""),
     q: str = Form(""),
-) -> RedirectResponse:
+) -> RedirectResponse | JSONResponse:
+    is_fetch_request = request.headers.get("x-requested-with", "").lower() == "fetch"
     if not _beforest_ops_authenticated(request):
+        if is_fetch_request:
+            return JSONResponse({"ok": False, "error": "Please login again."}, status_code=401)
         return RedirectResponse("/admin/beforest?error=Please+login+again", status_code=303)
 
     try:
@@ -1607,12 +1675,23 @@ async def beforest_admin_handover(
         )
     except Exception:
         logger.exception("Beforest admin handover failed for %s", contact_id)
+        if is_fetch_request:
+            return JSONResponse({"ok": False, "error": "Could not update handover status."}, status_code=500)
         query_params = {"contact_id": contact_id, "error": "Could not update handover status."}
         if q:
             query_params["q"] = q
         return RedirectResponse(
             f"/admin/beforest?{urllib.parse.urlencode(query_params)}",
             status_code=303,
+        )
+    if is_fetch_request:
+        return JSONResponse(
+            {
+                "ok": True,
+                "contact_id": contact_id,
+                "handover_status": status_value,
+                "message": f"Updated {contact_id} to {status_value}",
+            }
         )
     success_message = f"Updated {contact_id} to {status_value}"
     query_params = {"contact_id": contact_id, "message": success_message}

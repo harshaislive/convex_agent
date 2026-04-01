@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import langsmith
@@ -793,6 +793,43 @@ async def test_beforest_admin_handover_uses_existing_handover_flow(mock_beforest
     assert handover_request.status == "human"
 
 
+@pytest.mark.asyncio
+@patch("service.service.beforest_handover", new_callable=AsyncMock)
+async def test_beforest_admin_handover_returns_json_for_fetch_requests(mock_beforest_handover) -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        cookie_value = svc._beforest_ops_cookie_value()
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/admin/beforest/handover",
+                "headers": [
+                    (b"cookie", f"{svc.BEFOREST_OPS_COOKIE_NAME}={cookie_value}".encode()),
+                    (b"x-requested-with", b"fetch"),
+                ],
+            }
+        )
+        response = await svc.beforest_admin_handover(
+            request,
+            contact_id="12345",
+            status_value="paused",
+            updated_by="founder",
+            note="",
+        )
+
+    assert response.status_code == 200
+    assert response.body
+    assert b'"ok":true' in response.body
+    assert b'"handover_status":"paused"' in response.body
+
+
 def test_beforest_operating_context_message_includes_collective_rules() -> None:
     from agents.beforest_agent import _beforest_operating_context_message
 
@@ -809,6 +846,47 @@ def test_beforest_operating_context_message_includes_collective_rules() -> None:
     assert "form.typeform.com/to/i8eBLQkz" in result.content
     assert "form.typeform.com/to/hbDB2ybS" in result.content
     assert "form.typeform.com/to/kfcjiXxR" in result.content
+
+
+@pytest.mark.asyncio
+@patch("service.service.httpx.AsyncClient")
+async def test_save_beforest_event_omits_null_agent_reply_at(mock_async_client_class) -> None:
+    import service.service as svc
+
+    post_mock = AsyncMock()
+    response_mock = MagicMock()
+    response_mock.raise_for_status.return_value = None
+    post_mock.return_value = response_mock
+    client_mock = MagicMock()
+    client_mock.post = post_mock
+    async_context = AsyncMock()
+    async_context.__aenter__.return_value = client_mock
+    async_context.__aexit__.return_value = False
+    mock_async_client_class.return_value = async_context
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "shared-secret")
+    with (
+        patch.object(svc.settings, "CONVEX_HTTP_ACTION_URL", "https://example.convex.site/instagram/store-dm-event"),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", fake_secret),
+    ):
+        await svc._save_beforest_event_to_convex(
+            user_id=None,
+            thread_id="thread-1",
+            subscriber_data={},
+            inbound_message="",
+            reply_text="",
+            manychat_subscriber_id="12345",
+            automation_state=svc.BeforestAutomationState(
+                status="human",
+                updated_at=123.0,
+                updated_by="ops",
+                note="",
+            ),
+            agent_replied=False,
+        )
+
+    payload = post_mock.await_args.kwargs["json"]
+    assert "agentReplyAt" not in payload
 
 
 def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() -> None:
