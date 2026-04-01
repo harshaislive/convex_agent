@@ -459,7 +459,7 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
 
     text = (
         "Beforest is a regenerative lifestyle company. "
-        "You can explore Hammiyala through the collectives page. "
+        "You can show interest in Hammiyala via beforest.co/contact or hello@beforest.co. "
         "If you want, I can share the direct link. "
         "Here is extra detail that should not be kept in an Instagram DM reply."
     )
@@ -467,7 +467,7 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     result = _clamp_beforest_dm_reply(text)
 
     assert "regenerative lifestyle company" in result
-    assert "collectives page" in result
+    assert "hello@beforest.co" in result or "beforest.co/contact" in result
     assert "extra detail" not in result
     assert len(result) <= 220
 
@@ -625,6 +625,17 @@ def test_derive_beforest_automation_state_reads_latest_status() -> None:
     assert result.status == "human"
     assert result.updated_by == "ops"
     assert "creator lead" in result.note
+
+
+def test_beforest_operating_context_message_includes_collective_rules() -> None:
+    from agents.beforest_agent import _beforest_operating_context_message
+
+    result = _beforest_operating_context_message("How do I join a Beforest collective?")
+
+    assert result is not None
+    assert "Mumbai, Poomaale 2.0, Bhopal, Hammiyala" in result.content
+    assert "hello@beforest.co" in result.content
+    assert "show interest" in result.content
 
 
 def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() -> None:

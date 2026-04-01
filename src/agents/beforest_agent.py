@@ -25,6 +25,31 @@ tools = [
     fetch_beforest_markdown,
     browse_beforest_page,
 ]
+_COLLECTIVE_QUERY_TERMS = (
+    "collective",
+    "collectives",
+    "hammiyala",
+    "bhopal",
+    "poomaale",
+    "mumbai",
+    "join",
+    "visit",
+    "resident",
+    "stay",
+    "show interest",
+    "invite",
+)
+_CONTACT_QUERY_TERMS = (
+    "contact",
+    "email",
+    "reach out",
+    "write to",
+    "partnership",
+    "collab",
+    "collaborate",
+    "creator",
+    "influencer",
+)
 
 
 class AgentState(MessagesState, total=False):
@@ -75,6 +100,21 @@ def _knowledge_context_message(question: str) -> SystemMessage | None:
     return SystemMessage(content="\n".join(lines))
 
 
+def _beforest_operating_context_message(question: str) -> SystemMessage | None:
+    lowered = question.lower()
+    if not any(term in lowered for term in (*_COLLECTIVE_QUERY_TERMS, *_CONTACT_QUERY_TERMS)):
+        return None
+
+    lines = [
+        "Beforest operating guidance.",
+        "Operating collectives to mention: Mumbai, Poomaale 2.0, Bhopal, Hammiyala.",
+        "Do not imply that other collectives are currently open; say they are full if needed.",
+        "For collective interest, use 'show interest' language. Do not assume pages say 'get invite'.",
+        "Default contact route is hello@beforest.co or https://beforest.co/contact.",
+    ]
+    return SystemMessage(content="\n".join(lines))
+
+
 def wrap_model(model) -> RunnableSerializable[AgentState, AIMessage]:
     bound_model = model.bind_tools(tools)
 
@@ -82,6 +122,9 @@ def wrap_model(model) -> RunnableSerializable[AgentState, AIMessage]:
         messages = list(state["messages"])
         question = _latest_human_message(messages)
         prompt_messages: list[BaseMessage] = [SystemMessage(content=SYSTEM_PROMPT)]
+        operating_message = _beforest_operating_context_message(question)
+        if operating_message is not None:
+            prompt_messages.append(operating_message)
         knowledge_message = _knowledge_context_message(question)
         if knowledge_message is not None:
             prompt_messages.append(knowledge_message)
