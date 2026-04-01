@@ -13,7 +13,7 @@ from agents.beforest_tools import _sync_beforest_experiences_to_outline  # noqa:
 
 
 def main() -> int:
-    result = _sync_beforest_experiences_to_outline(force=True)
+    result = _sync_beforest_experiences_to_outline(force=True, quick=False)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0 if result.get("ok") else 1
 

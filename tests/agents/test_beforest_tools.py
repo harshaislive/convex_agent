@@ -109,7 +109,7 @@ def test_score_text_matches_related_word_forms():
     assert overview_score > 0
 
 
-@patch("agents.beforest_tools._load_live_search_pages")
+@patch("agents.beforest_tools._load_experiences_pages")
 def test_search_beforest_experiences_filters_past_dated_results_for_current_queries(mock_pages):
     mock_pages.return_value = [
         {
@@ -133,7 +133,7 @@ def test_search_beforest_experiences_filters_past_dated_results_for_current_quer
     assert "https://experiences.beforest.co/past-event" not in urls
 
 
-@patch("agents.beforest_tools._load_live_search_pages")
+@patch("agents.beforest_tools._load_experiences_pages")
 def test_search_beforest_experiences_returns_fallback_when_no_upcoming_dates(mock_pages):
     mock_pages.return_value = [
         {
@@ -151,7 +151,7 @@ def test_search_beforest_experiences_returns_fallback_when_no_upcoming_dates(moc
     assert results[0]["url"] == "https://experiences.beforest.co/"
 
 
-@patch("agents.beforest_tools._load_live_search_pages")
+@patch("agents.beforest_tools._load_experiences_pages")
 def test_search_beforest_experiences_treats_next_query_as_fresh_date_request(mock_pages):
     mock_pages.return_value = [
         {
@@ -169,7 +169,7 @@ def test_search_beforest_experiences_treats_next_query_as_fresh_date_request(moc
     assert results[0]["url"] == "https://experiences.beforest.co/"
 
 
-@patch("agents.beforest_tools._load_live_search_pages")
+@patch("agents.beforest_tools._load_experiences_pages")
 def test_build_beforest_experiences_outline_markdown_keeps_only_future_entries(mock_pages):
     mock_pages.return_value = [
         {
@@ -194,6 +194,41 @@ def test_build_beforest_experiences_outline_markdown_keeps_only_future_entries(m
     assert "https://experiences.beforest.co/future" in markdown
     assert "Past event" not in markdown
     assert len(entries) == 1
+
+
+@patch("agents.beforest_tools._fetch_beforest_page")
+def test_load_experiences_pages_stays_within_experiences_host_and_limit(mock_fetch_page):
+    from agents.beforest_tools import _load_experiences_pages
+
+    mock_fetch_page.side_effect = [
+        {
+            "host": "experiences.beforest.co",
+            "title": "Index",
+            "text": "Index",
+            "markdown": "# Index",
+            "url": "https://experiences.beforest.co/",
+            "links": [
+                "https://experiences.beforest.co/future-1",
+                "https://experiences.beforest.co/future-2",
+                "https://beforest.co/ignore-me",
+            ],
+        },
+        {
+            "host": "experiences.beforest.co",
+            "title": "Future 1",
+            "text": "Future 1 Jan 26, 2099",
+            "markdown": "# Future 1",
+            "url": "https://experiences.beforest.co/future-1",
+            "links": [],
+        },
+    ]
+
+    results = _load_experiences_pages(force_refresh=True, max_pages=2, timeout_seconds=1.0)
+
+    assert len(results) == 2
+    assert all(item["host"] == "experiences.beforest.co" for item in results)
+    fetched_urls = [call.args[0] for call in mock_fetch_page.call_args_list]
+    assert "https://beforest.co/ignore-me" not in fetched_urls
 
 
 @patch("agents.beforest_tools._outline_request")

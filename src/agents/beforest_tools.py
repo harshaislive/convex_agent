@@ -25,6 +25,9 @@ LIVE_SEARCH_ALLOWED_HOSTS = {
     "bewild.life",
 }
 DEFAULT_HTTP_TIMEOUT_SECONDS = 10.0
+EXPERIENCES_SYNC_HTTP_TIMEOUT_SECONDS = 4.0
+EXPERIENCES_SYNC_MAX_PAGES = 8
+EXPERIENCES_DAILY_SYNC_MAX_PAGES = 16
 OUTLINE_PAGE_SIZE = 100
 LIVE_SEARCH_CACHE_TTL_SECONDS = 300
 LIVE_SEARCH_MAX_PAGES = 24
@@ -64,6 +67,10 @@ _OUTLINE_CACHE: dict[str, object] = {
     "error": "",
 }
 _LIVE_SEARCH_CACHE: dict[str, object] = {
+    "pages": [],
+    "fetched_at": 0.0,
+}
+_EXPERIENCES_CACHE: dict[str, object] = {
     "pages": [],
     "fetched_at": 0.0,
 }
@@ -378,6 +385,22 @@ def _page_has_upcoming_experience_date(page: dict[str, object], *, today: date) 
     return any(parsed_date >= today for parsed_date in parsed_dates)
 
 
+def _is_experiences_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme in {"http", "https"} and parsed.netloc == "experiences.beforest.co"
+
+
+def _experience_link_priority(url: str) -> tuple[int, int, str]:
+    lowered = urlparse(url).path.lower()
+    if not lowered.strip("/"):
+        return (0, 0, lowered)
+    keyword_bonus = sum(
+        1 for token in ("experience", "retreat", "event", "workshop", "calendar", "upcoming") if token in lowered
+    )
+    depth = len([part for part in lowered.split("/") if part])
+    return (-keyword_bonus, depth, lowered)
+
+
 def _outline_request(path: str, payload: dict[str, object]) -> dict[str, object]:
     api_url = settings.OUTLINE_API_URL
     token = settings.OUTLINE_API_TOKEN
@@ -438,12 +461,16 @@ def _format_experience_date_label(parsed_dates: list[date]) -> str:
     return " / ".join(parsed_date.strftime("%B %-d, %Y") for parsed_date in unique_dates[:3])
 
 
-def _build_beforest_experiences_outline_markdown(*, today: date) -> tuple[str, list[dict[str, str]]]:
-    pages = [
-        page
-        for page in _load_live_search_pages()
-        if str(page.get("host", "")) == "experiences.beforest.co"
-    ]
+def _build_beforest_experiences_outline_markdown(
+    *,
+    today: date,
+    quick: bool = False,
+) -> tuple[str, list[dict[str, str]]]:
+    pages = _load_experiences_pages(
+        force_refresh=True,
+        max_pages=EXPERIENCES_SYNC_MAX_PAGES if quick else EXPERIENCES_DAILY_SYNC_MAX_PAGES,
+        timeout_seconds=EXPERIENCES_SYNC_HTTP_TIMEOUT_SECONDS if quick else DEFAULT_HTTP_TIMEOUT_SECONDS,
+    )
     entries: list[dict[str, str]] = []
     seen_urls: set[str] = set()
 
@@ -509,7 +536,7 @@ def _build_beforest_experiences_outline_markdown(*, today: date) -> tuple[str, l
     return "\n".join(lines).strip(), entries
 
 
-def _sync_beforest_experiences_to_outline(*, force: bool = True) -> dict[str, object]:
+def _sync_beforest_experiences_to_outline(*, force: bool = True, quick: bool = False) -> dict[str, object]:
     api_url = settings.OUTLINE_API_URL
     token = settings.OUTLINE_API_TOKEN
     if not api_url or not token:
@@ -521,7 +548,7 @@ def _sync_beforest_experiences_to_outline(*, force: bool = True) -> dict[str, ob
         }
 
     today = datetime.now(UTC).date()
-    markdown, entries = _build_beforest_experiences_outline_markdown(today=today)
+    markdown, entries = _build_beforest_experiences_outline_markdown(today=today, quick=quick)
     existing = _find_outline_document_by_title(BEFOREST_EXPERIENCES_OUTLINE_TITLE)
     payload: dict[str, object] = {
         "title": BEFOREST_EXPERIENCES_OUTLINE_TITLE,
@@ -758,7 +785,7 @@ def _markdown_to_text(markdown: str) -> str:
     return _normalize_block(text)
 
 
-def _fetch_beforest_page(url: str) -> dict[str, object]:
+def _fetch_beforest_page(url: str, *, timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS) -> dict[str, object]:
     if not _is_allowed_beforest_url(url):
         raise ValueError("URL must be on beforest.co, a beforest.co subdomain, or bewild.life.")
     request = Request(
@@ -766,7 +793,7 @@ def _fetch_beforest_page(url: str) -> dict[str, object]:
         headers={"User-Agent": "BeforestAgent/1.0 (+https://beforest.co)"},
     )
     try:
-        with urlopen(request, timeout=DEFAULT_HTTP_TIMEOUT_SECONDS) as response:  # noqa: S310
+        with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
             charset = response.headers.get_content_charset() or "utf-8"
             html = response.read().decode(charset, errors="replace")
     except HTTPError as exc:
@@ -845,6 +872,61 @@ def _load_live_search_pages() -> list[dict[str, object]]:
     return pages
 
 
+def _load_experiences_pages(
+    *,
+    force_refresh: bool = False,
+    max_pages: int = EXPERIENCES_SYNC_MAX_PAGES,
+    timeout_seconds: float = EXPERIENCES_SYNC_HTTP_TIMEOUT_SECONDS,
+) -> list[dict[str, object]]:
+    now = datetime.now(UTC).timestamp()
+    cached_pages = _EXPERIENCES_CACHE.get("pages", [])
+    fetched_at = float(_EXPERIENCES_CACHE.get("fetched_at", 0.0))
+    if (
+        not force_refresh
+        and now - fetched_at < LIVE_SEARCH_CACHE_TTL_SECONDS
+        and isinstance(cached_pages, list)
+        and cached_pages
+    ):
+        return [page for page in cached_pages if isinstance(page, dict)]
+
+    queue = [EXPERIENCES_BASE_URL]
+    seen: set[str] = set()
+    pages: list[dict[str, object]] = []
+
+    while queue and len(pages) < max_pages:
+        current = queue.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        try:
+            page = _fetch_beforest_page(current, timeout_seconds=timeout_seconds)
+        except (ValueError, RuntimeError):
+            continue
+        pages.append(page)
+
+        candidate_links = []
+        for link in page.get("links", []):
+            if not isinstance(link, str):
+                continue
+            if link in seen or link in queue:
+                continue
+            if not _is_experiences_url(link):
+                continue
+            if not (_likely_detail_link(link) or link.endswith("/")):
+                continue
+            candidate_links.append(link)
+
+        for link in sorted(candidate_links, key=_experience_link_priority):
+            if len(queue) + len(pages) >= max_pages:
+                break
+            queue.append(link)
+
+    _EXPERIENCES_CACHE["pages"] = pages
+    _EXPERIENCES_CACHE["fetched_at"] = now
+    _log_knowledge_trace(f"Experiences cache refreshed pages={len(pages)}")
+    return pages
+
+
 @tool
 def search_beforest_knowledge(
     query: str,
@@ -890,7 +972,7 @@ def search_beforest_knowledge(
 @tool
 def sync_beforest_experiences_outline(force: bool = True) -> dict[str, object]:
     """Refresh the canonical Outline doc for Beforest experiences from the live experiences site."""
-    return _sync_beforest_experiences_to_outline(force=force)
+    return _sync_beforest_experiences_to_outline(force=force, quick=True)
 
 
 @tool
@@ -980,11 +1062,7 @@ def search_beforest_experiences(query: str, max_results: int = 5) -> list[dict[s
     """Search live Beforest experiences content with stronger crawling and ranking."""
     requires_fresh_dates = _is_current_experiences_query(query)
     today = datetime.now(UTC).date()
-    pages = [
-        page
-        for page in _load_live_search_pages()
-        if str(page.get("host", "")) == "experiences.beforest.co"
-    ]
+    pages = _load_experiences_pages(force_refresh=requires_fresh_dates)
     scored_pages: list[tuple[int, dict[str, object]]] = []
     for page in pages:
         title = str(page.get("title", ""))
