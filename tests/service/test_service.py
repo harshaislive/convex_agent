@@ -396,6 +396,14 @@ def test_build_manychat_content_includes_buttons_for_urls() -> None:
     assert content["messages"][0]["buttons"][1]["caption"] == "Explore Products"
 
 
+def test_build_manychat_content_uses_show_interest_caption_for_typeform() -> None:
+    from service.service import _build_manychat_content
+
+    content = _build_manychat_content("Apply here https://form.typeform.com/to/hbDB2ybS")
+
+    assert content["messages"][0]["buttons"][0]["caption"] == "Show Interest"
+
+
 @pytest.mark.asyncio
 async def test_push_manychat_reply_retries_without_buttons_on_400() -> None:
     from service.service import _push_manychat_reply
@@ -646,9 +654,16 @@ def test_beforest_operating_context_message_includes_collective_rules() -> None:
     result = _beforest_operating_context_message("How do I join a Beforest collective?")
 
     assert result is not None
+    assert "https://beforest.co/call-mail/" in result.content
+    assert "https://beforest.co/the-bhopal-collective/" in result.content
+    assert "https://www.instagram.com/beforestfarming/" in result.content
     assert "Mumbai, Poomaale 2.0, Bhopal, Hammiyala" in result.content
     assert "hello@beforest.co" in result.content
     assert "show interest" in result.content
+    assert "form.typeform.com/to/CYae8hmZ" in result.content
+    assert "form.typeform.com/to/i8eBLQkz" in result.content
+    assert "form.typeform.com/to/hbDB2ybS" in result.content
+    assert "form.typeform.com/to/kfcjiXxR" in result.content
 
 
 def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() -> None:

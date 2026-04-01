@@ -839,6 +839,8 @@ def _remove_urls_from_text(text: str) -> str:
 
 def _button_caption_for_url(url: str) -> str:
     lower_url = url.lower()
+    if "form.typeform.com" in lower_url:
+        return "Show Interest"
     if "experiences.beforest.co" in lower_url:
         return "Explore Experiences"
     if "hospitality.beforest.co" in lower_url:

@@ -50,6 +50,38 @@ _CONTACT_QUERY_TERMS = (
     "creator",
     "influencer",
 )
+_ROUTING_QUERY_TERMS = (
+    "link",
+    "website",
+    "page",
+    "homepage",
+    "instagram",
+    "facebook",
+    "social",
+)
+_COLLECTIVE_INTEREST_LINKS = {
+    "bhopal": "https://form.typeform.com/to/CYae8hmZ?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_time_spent=xxxxx#device=xxxxx&intent_copy=xxxxx&distraction_score=xxxxx&first_visit=xxxxx&total_visits=xxxxx&behavioral_journey=xxxxx&current_page=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
+    "poomaale 2.0": "https://form.typeform.com/to/i8eBLQkz?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_time_spent=xxxxx#current_page=xxxxx&behavioral_journey=xxxxx&total_visits=xxxxx&first_visit=xxxxx&distraction_score=xxxxx&intent_copy=xxxxx&device=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
+    "hammiyala": "https://form.typeform.com/to/hbDB2ybS?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_time_spent=xxxxx#current_page=xxxxx&behavioral_journey=xxxxx&total_visits=xxxxx&first_visit=xxxxx&distraction_score=xxxxx&intent_copy=xxxxx&device=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
+    "mumbai": "https://form.typeform.com/to/kfcjiXxR?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_campaign=xxxxx&utm_term=xxxxx&utm_time_spent=xxxxx#current_page=xxxxx&behavioral_journey=xxxxx&total_visits=xxxxx&first_visit=xxxxx&distraction_score=xxxxx&intent_copy=xxxxx&device=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
+}
+_FAST_LINKS = {
+    "beforest_home": "https://beforest.co/",
+    "bewild_home": "https://bewild.life/",
+    "experiences": "https://experiences.beforest.co/",
+    "hospitality": "https://hospitality.beforest.co/",
+    "ten_percent": "https://10percent.beforest.co/",
+    "contact": "https://beforest.co/call-mail/",
+    "poomaale_1": "https://beforest.co/the-poomaale-estate/",
+    "poomaale_2": "https://beforest.co/poomaale-2-0-collective/",
+    "hyderabad_collective": "https://beforest.co/hyderabad-collective/",
+    "mumbai_collective": "https://beforest.co/the-mumbai-collective/",
+    "hammiyala_collective": "https://beforest.co/co-forest/",
+    "bhopal_collective": "https://beforest.co/the-bhopal-collective/",
+    "beforest_instagram": "https://www.instagram.com/beforestfarming/",
+    "beforest_facebook": "https://www.facebook.com/beforestfarming/",
+    "bewild_instagram": "https://www.instagram.com/bewild.life/",
+}
 
 
 class AgentState(MessagesState, total=False):
@@ -102,15 +134,41 @@ def _knowledge_context_message(question: str) -> SystemMessage | None:
 
 def _beforest_operating_context_message(question: str) -> SystemMessage | None:
     lowered = question.lower()
-    if not any(term in lowered for term in (*_COLLECTIVE_QUERY_TERMS, *_CONTACT_QUERY_TERMS)):
+    if not any(
+        term in lowered
+        for term in (*_COLLECTIVE_QUERY_TERMS, *_CONTACT_QUERY_TERMS, *_ROUTING_QUERY_TERMS)
+    ):
         return None
 
     lines = [
         "Beforest operating guidance.",
+        "Use these canonical fast links when routing users:",
+        f"- Beforest home: {_FAST_LINKS['beforest_home']}",
+        f"- Bewild: {_FAST_LINKS['bewild_home']}",
+        f"- Experiences: {_FAST_LINKS['experiences']}",
+        f"- Hospitality: {_FAST_LINKS['hospitality']}",
+        f"- 10Percent: {_FAST_LINKS['ten_percent']}",
+        f"- Contact: {_FAST_LINKS['contact']}",
         "Operating collectives to mention: Mumbai, Poomaale 2.0, Bhopal, Hammiyala.",
         "Do not imply that other collectives are currently open; say they are full if needed.",
+        "Collective page links:",
+        f"- Poomaale 1.0: {_FAST_LINKS['poomaale_1']}",
+        f"- Poomaale 2.0: {_FAST_LINKS['poomaale_2']}",
+        f"- Hyderabad Collective: {_FAST_LINKS['hyderabad_collective']}",
+        f"- Mumbai Collective: {_FAST_LINKS['mumbai_collective']}",
+        f"- Hammiyala Collective: {_FAST_LINKS['hammiyala_collective']}",
+        f"- Bhopal Collective: {_FAST_LINKS['bhopal_collective']}",
         "For collective interest, use 'show interest' language. Do not assume pages say 'get invite'.",
-        "Default contact route is hello@beforest.co or https://beforest.co/contact.",
+        "For specific collective sign-up interest, use these exact links when relevant:",
+        f"- Bhopal: {_COLLECTIVE_INTEREST_LINKS['bhopal']}",
+        f"- Poomaale 2.0: {_COLLECTIVE_INTEREST_LINKS['poomaale 2.0']}",
+        f"- Hammiyala: {_COLLECTIVE_INTEREST_LINKS['hammiyala']}",
+        f"- Mumbai: {_COLLECTIVE_INTEREST_LINKS['mumbai']}",
+        "Social links:",
+        f"- Beforest Instagram: {_FAST_LINKS['beforest_instagram']}",
+        f"- Beforest Facebook: {_FAST_LINKS['beforest_facebook']}",
+        f"- Bewild Instagram: {_FAST_LINKS['bewild_instagram']}",
+        "Default non-signup contact route is hello@beforest.co or https://beforest.co/call-mail/.",
     ]
     return SystemMessage(content="\n".join(lines))
 
