@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import secrets
+import urllib.parse
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -112,15 +113,31 @@ def _escape_html(value: str) -> str:
     )
 
 
+def _format_beforest_ops_timestamp(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "Unknown"
+    return datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M")
+
+
+def _truncate_beforest_ops_text(value: Any, *, limit: int = 140) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
 def _render_beforest_admin_page(
     *,
     authenticated: bool,
     contact_id: str = "",
+    search_query: str = "",
     status_payload: dict[str, Any] | None = None,
+    recent_conversations: list[dict[str, Any]] | None = None,
     message: str = "",
     error: str = "",
 ) -> str:
     safe_contact_id = _escape_html(contact_id)
+    safe_search_query = _escape_html(search_query)
     safe_message = _escape_html(message)
     safe_error = _escape_html(error)
     status_markup = ""
@@ -128,10 +145,7 @@ def _render_beforest_admin_page(
         handover_status = _escape_html(str(status_payload.get("handover_status", "bot")))
         updated_by = _escape_html(str(status_payload.get("updated_by", "") or "system"))
         note = _escape_html(str(status_payload.get("note", "") or ""))
-        updated_at_raw = status_payload.get("updated_at")
-        updated_at = "Unknown"
-        if isinstance(updated_at_raw, (int, float)):
-            updated_at = datetime.fromtimestamp(float(updated_at_raw)).strftime("%Y-%m-%d %H:%M:%S")
+        updated_at = _escape_html(_format_beforest_ops_timestamp(status_payload.get("updated_at")))
         status_markup = f"""
         <section class="panel">
           <div class="label">Current Status</div>
@@ -139,6 +153,62 @@ def _render_beforest_admin_page(
           <div class="meta">Updated by {updated_by} at {updated_at}</div>
           <div class="note">{note}</div>
         </section>
+        """
+    conversation_cards = ""
+    for item in recent_conversations or []:
+        item_contact_id = str(item.get("contactId", "") or "").strip()
+        if not item_contact_id:
+            continue
+        display_name = (
+            str(item.get("name", "") or "").strip()
+            or str(item.get("instagramAccountName", "") or "").strip()
+            or "Unknown contact"
+        )
+        username = str(item.get("instagramAccountName", "") or "").strip()
+        handover_status = str(item.get("handoverStatus", "bot") or "bot").strip().lower()
+        status_class = handover_status if handover_status in {"human", "paused"} else "bot"
+        preview = str(item.get("message", "") or "").strip() or str(item.get("agentReplyText", "") or "").strip()
+        preview = _truncate_beforest_ops_text(preview or "No message preview yet.")
+        note = _truncate_beforest_ops_text(item.get("note", ""), limit=90)
+        timestamp_label = _format_beforest_ops_timestamp(item.get("receivedAt"))
+        selected_class = " selected" if item_contact_id == contact_id else ""
+        query_suffix = f"&q={urllib.parse.quote_plus(search_query)}" if search_query else ""
+        display_name_html = _escape_html(display_name)
+        username_html = _escape_html(f"@{username}" if username else "")
+        preview_html = _escape_html(preview)
+        note_html = _escape_html(note)
+        contact_id_html = _escape_html(item_contact_id)
+        timestamp_html = _escape_html(timestamp_label)
+        conversation_cards += f"""
+        <article class="conversation{selected_class}">
+          <div class="conversation-head">
+            <div>
+              <a class="name-link" href="/admin/beforest?contact_id={urllib.parse.quote_plus(item_contact_id)}{query_suffix}">{display_name_html}</a>
+              <div class="conversation-meta">{username_html} · {contact_id_html}</div>
+            </div>
+            <span class="badge {status_class}">{_escape_html(handover_status)}</span>
+          </div>
+          <div class="conversation-preview">{preview_html}</div>
+          <div class="conversation-foot">
+            <span>{timestamp_html}</span>
+            <span>{note_html}</span>
+          </div>
+          <form method="post" action="/admin/beforest/handover" class="conversation-actions">
+            <input type="hidden" name="contact_id" value="{contact_id_html}" />
+            <input type="hidden" name="updated_by" value="ops" />
+            <input type="hidden" name="note" value="" />
+            <input type="hidden" name="q" value="{safe_search_query}" />
+            <button type="submit" name="status" value="human">Take Over</button>
+            <button class="warn" type="submit" name="status" value="paused">Pause</button>
+            <button class="secondary" type="submit" name="status" value="bot">Resume</button>
+          </form>
+        </article>
+        """
+    if authenticated and not conversation_cards:
+        conversation_cards = """
+        <article class="conversation empty">
+          <div class="conversation-preview">No conversations matched this search yet.</div>
+        </article>
         """
     login_markup = """
     <form method="post" action="/admin/beforest/login" class="stack">
@@ -149,31 +219,51 @@ def _render_beforest_admin_page(
     </form>
     """
     controls_markup = f"""
-    <form method="get" action="/admin/beforest" class="stack">
-      <label>ManyChat Contact ID
-        <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
-      </label>
-      <button class="secondary" type="submit">Check Status</button>
-    </form>
-    {status_markup}
-    <form method="post" action="/admin/beforest/handover" class="stack">
-      <label>ManyChat Contact ID
-        <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
-      </label>
-      <div class="row">
-        <label>Operator
-          <input type="text" name="updated_by" placeholder="founder" />
-        </label>
-      </div>
-      <label>Note
-        <textarea name="note" placeholder="Founder taking over partnership conversation"></textarea>
-      </label>
-      <div class="actions">
-        <button type="submit" name="status" value="human">Take Over</button>
-        <button class="warn" type="submit" name="status" value="paused">Pause Bot</button>
-        <button class="secondary" type="submit" name="status" value="bot">Resume Bot</button>
-      </div>
-    </form>
+    <div class="layout">
+      <section class="panel stack">
+        <form method="get" action="/admin/beforest" class="stack">
+          <label>Search Conversations
+            <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, last message" />
+          </label>
+          <button class="secondary" type="submit">Search Inbox</button>
+        </form>
+        <div class="label">Recent Conversations</div>
+        <div class="conversation-list">{conversation_cards}</div>
+      </section>
+      <section class="stack">
+        <section class="panel stack">
+          <form method="get" action="/admin/beforest" class="stack">
+            <input type="hidden" name="q" value="{safe_search_query}" />
+            <label>Selected Contact ID
+              <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
+            </label>
+            <button class="secondary" type="submit">Load Contact</button>
+          </form>
+          {status_markup}
+        </section>
+        <section class="panel stack">
+          <form method="post" action="/admin/beforest/handover" class="stack">
+            <input type="hidden" name="q" value="{safe_search_query}" />
+            <label>ManyChat Contact ID
+              <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
+            </label>
+            <div class="row">
+              <label>Operator
+                <input type="text" name="updated_by" placeholder="founder" />
+              </label>
+            </div>
+            <label>Note
+              <textarea name="note" placeholder="Founder taking over partnership conversation"></textarea>
+            </label>
+            <div class="actions">
+              <button type="submit" name="status" value="human">Take Over</button>
+              <button class="warn" type="submit" name="status" value="paused">Pause Bot</button>
+              <button class="secondary" type="submit" name="status" value="bot">Resume Bot</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </div>
     """
 
     body = f"""
@@ -202,7 +292,7 @@ def _render_beforest_admin_page(
             color: var(--ink);
           }}
           .shell {{
-            max-width: 560px;
+            max-width: 1180px;
             margin: 48px auto;
             padding: 0 20px;
           }}
@@ -215,6 +305,7 @@ def _render_beforest_admin_page(
           }}
           h1 {{ margin: 0 0 8px; font-size: 32px; }}
           p, .meta, .note {{ color: var(--muted); line-height: 1.45; }}
+          .layout {{ display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr); gap: 18px; align-items: start; }}
           .stack {{ display: grid; gap: 14px; }}
           label {{ display: grid; gap: 6px; font-weight: 600; }}
           input, textarea {{
@@ -229,6 +320,56 @@ def _render_beforest_admin_page(
           textarea {{ min-height: 92px; resize: vertical; }}
           .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
           .actions {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }}
+          .conversation-list {{ display: grid; gap: 12px; }}
+          .conversation {{
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            padding: 14px;
+            background: #fffdf7;
+            display: grid;
+            gap: 10px;
+          }}
+          .conversation.selected {{ border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(47, 94, 67, 0.15); }}
+          .conversation.empty {{ background: #f8f2e6; }}
+          .conversation-head {{
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: start;
+          }}
+          .name-link {{
+            color: var(--ink);
+            font-size: 18px;
+            font-weight: 700;
+            text-decoration: none;
+          }}
+          .name-link:hover {{ text-decoration: underline; }}
+          .conversation-meta,
+          .conversation-foot {{
+            color: var(--muted);
+            font-size: 13px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+          }}
+          .conversation-preview {{
+            font-size: 15px;
+            line-height: 1.45;
+          }}
+          .conversation-actions {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }}
+          .badge {{
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: #fff;
+            background: #6d7e70;
+          }}
+          .badge.human {{ background: #8a2f2f; }}
+          .badge.paused {{ background: #9c5c22; }}
+          .badge.bot {{ background: var(--accent); }}
           button {{
             width: 100%;
             border: 0;
@@ -253,6 +394,12 @@ def _render_beforest_admin_page(
           .status {{ font-size: 28px; margin-top: 6px; text-transform: lowercase; }}
           .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
           form.inline {{ margin: 0; }}
+          @media (max-width: 900px) {{
+            .layout {{ grid-template-columns: 1fr; }}
+          }}
+          @media (max-width: 640px) {{
+            .actions, .conversation-actions, .row {{ grid-template-columns: 1fr; }}
+          }}
         </style>
       </head>
       <body>
@@ -957,6 +1104,31 @@ async def _load_beforest_events_from_convex(contact_id: str) -> list[dict[str, A
     return [item for item in payload if isinstance(item, dict)]
 
 
+async def _load_beforest_recent_conversations_from_convex(
+    *, search_query: str = "", limit: int = 25
+) -> list[dict[str, Any]]:
+    base_url = _convex_base_url()
+    if not base_url or not settings.AGENT_SHARED_SECRET:
+        return []
+
+    query = urllib.parse.urlencode(
+        {"q": search_query, "limit": max(1, min(limit, 100))},
+        doseq=False,
+    )
+    history_url = f"{base_url}/instagram/recent-conversations?{query}"
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            history_url,
+            headers={"x-agent-secret": settings.AGENT_SHARED_SECRET.get_secret_value()},
+        )
+        response.raise_for_status()
+        payload = response.json()
+
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
 def _beforest_messages_from_events(events: list[dict[str, Any]]) -> list[HumanMessage | AIMessage]:
     messages: list[HumanMessage | AIMessage] = []
     for item in events:
@@ -1341,15 +1513,27 @@ async def knowledge_health() -> dict[str, object]:
 async def beforest_admin_page(
     request: Request,
     contact_id: str = "",
+    q: str = "",
     message: str = "",
     error: str = "",
 ) -> HTMLResponse:
     if not _beforest_ops_authenticated(request):
         return HTMLResponse(
-            _render_beforest_admin_page(authenticated=False, contact_id=contact_id, error=error)
+            _render_beforest_admin_page(
+                authenticated=False,
+                contact_id=contact_id,
+                search_query=q,
+                error=error,
+            )
         )
 
     status_payload: dict[str, Any] | None = None
+    recent_conversations: list[dict[str, Any]] = []
+    try:
+        recent_conversations = await _load_beforest_recent_conversations_from_convex(search_query=q)
+    except Exception as exc:
+        logger.warning("Failed loading Beforest recent conversations: %s", exc)
+        error = error or "Inbox data could not be loaded from Convex."
     if contact_id:
         history_events = await _load_beforest_events_from_convex(contact_id)
         automation_state = _derive_beforest_automation_state(history_events)
@@ -1363,7 +1547,9 @@ async def beforest_admin_page(
         _render_beforest_admin_page(
             authenticated=True,
             contact_id=contact_id,
+            search_query=q,
             status_payload=status_payload,
+            recent_conversations=recent_conversations,
             message=message,
             error=error,
         )
@@ -1404,6 +1590,7 @@ async def beforest_admin_handover(
     status_value: Literal["bot", "human", "paused"] = Form(..., alias="status"),
     updated_by: str = Form(""),
     note: str = Form(""),
+    q: str = Form(""),
 ) -> RedirectResponse:
     if not _beforest_ops_authenticated(request):
         return RedirectResponse("/admin/beforest?error=Please+login+again", status_code=303)
@@ -1417,8 +1604,11 @@ async def beforest_admin_handover(
         )
     )
     success_message = f"Updated {contact_id} to {status_value}"
+    query_params = {"contact_id": contact_id, "message": success_message}
+    if q:
+        query_params["q"] = q
     return RedirectResponse(
-        f"/admin/beforest?contact_id={contact_id}&message={success_message.replace(' ', '+')}",
+        f"/admin/beforest?{urllib.parse.urlencode(query_params)}",
         status_code=303,
     )
 

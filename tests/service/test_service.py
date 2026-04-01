@@ -690,6 +690,55 @@ async def test_beforest_admin_page_renders_login_form() -> None:
 
 
 @pytest.mark.asyncio
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+@patch("service.service._load_beforest_recent_conversations_from_convex", new_callable=AsyncMock)
+async def test_beforest_admin_page_renders_recent_conversations(
+    mock_recent_conversations, mock_load_events
+) -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        cookie_value = svc._beforest_ops_cookie_value()
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/admin/beforest",
+                "query_string": b"q=poomaale&contact_id=12345",
+                "headers": [
+                    (b"cookie", f"{svc.BEFOREST_OPS_COOKIE_NAME}={cookie_value}".encode())
+                ],
+            }
+        )
+        mock_recent_conversations.return_value = [
+            {
+                "contactId": "12345",
+                "name": "Aditi",
+                "instagramAccountName": "aditi.travels",
+                "message": "Can we collaborate on a Beforest stay?",
+                "receivedAt": 1_711_234_567.0,
+                "handoverStatus": "human",
+                "note": "Founder took over",
+            }
+        ]
+        mock_load_events.return_value = []
+        response = await svc.beforest_admin_page(request, contact_id="12345", q="poomaale")
+
+    body = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert "Search Conversations" in body
+    assert "Aditi" in body
+    assert "aditi.travels" in body
+    assert "Take Over" in body
+    assert "Founder took over" in body
+
+
+@pytest.mark.asyncio
 async def test_beforest_admin_login_sets_cookie() -> None:
     import service.service as svc
 
