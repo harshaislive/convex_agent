@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.pregel.types import StateSnapshot
 from langgraph.types import Interrupt
+from starlette.requests import Request
 
 from agents.agents import Agent
 from schema import ChatHistory, ChatMessage, ServiceMetadata
@@ -646,6 +647,100 @@ def test_derive_beforest_automation_state_reads_latest_status() -> None:
     assert result.status == "human"
     assert result.updated_by == "ops"
     assert "creator lead" in result.note
+
+
+def test_beforest_ops_cookie_auth_roundtrip() -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        cookie_value = svc._beforest_ops_cookie_value()
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/admin/beforest",
+                "headers": [
+                    (b"cookie", f"{svc.BEFOREST_OPS_COOKIE_NAME}={cookie_value}".encode())
+                ],
+            }
+        )
+
+        assert cookie_value is not None
+        assert svc._beforest_ops_authenticated(request) is True
+
+
+@pytest.mark.asyncio
+async def test_beforest_admin_page_renders_login_form() -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    request = Request({"type": "http", "method": "GET", "path": "/admin/beforest", "headers": []})
+    with patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret):
+        response = await svc.beforest_admin_page(request)
+
+    body = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert "Beforest Ops" in body
+    assert "Enter admin password" in body
+
+
+@pytest.mark.asyncio
+async def test_beforest_admin_login_sets_cookie() -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        response = await svc.beforest_admin_login(password="secret")
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/admin/beforest"
+    assert svc.BEFOREST_OPS_COOKIE_NAME in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+@patch("service.service.beforest_handover", new_callable=AsyncMock)
+async def test_beforest_admin_handover_uses_existing_handover_flow(mock_beforest_handover) -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        cookie_value = svc._beforest_ops_cookie_value()
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/admin/beforest/handover",
+                "headers": [
+                    (b"cookie", f"{svc.BEFOREST_OPS_COOKIE_NAME}={cookie_value}".encode())
+                ],
+            }
+        )
+        response = await svc.beforest_admin_handover(
+            request,
+            contact_id="12345",
+            status_value="human",
+            updated_by="founder",
+            note="Taking over founder thread",
+        )
+
+    assert response.status_code == 303
+    assert "contact_id=12345" in response.headers["location"]
+    handover_request = mock_beforest_handover.await_args.args[0]
+    assert handover_request.contact_id == "12345"
+    assert handover_request.status == "human"
 
 
 def test_beforest_operating_context_message_includes_collective_rules() -> None:

@@ -124,6 +124,7 @@ class Settings(BaseSettings):
     MANYCHAT_API_TOKEN: SecretStr | None = None
     MANYCHAT_API_BASE_URL: str = "https://api.manychat.com"
     MANYCHAT_CHANNEL: str = "instagram"
+    BEFOREST_OPS_PASSWORD: SecretStr | None = None
 
     LANGCHAIN_TRACING_V2: bool = False
     LANGCHAIN_PROJECT: str = "default"

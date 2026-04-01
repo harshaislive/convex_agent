@@ -5,7 +5,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 from client import AgentClientError
-from schema import AgentInfo, ChatHistory, ChatMessage, ServiceMetadata
+from schema import ChatHistory, ChatMessage
 from schema.models import OpenAIModelName
 
 
@@ -171,37 +171,6 @@ def test_app_new_chat_btn(mock_agent_client):
     at.sidebar.button[0].click().run()
 
     assert at.session_state.thread_id != thread_id_a
-    assert not at.exception
-
-
-def test_supports_beforest_ops_helper() -> None:
-    from streamlit_app import _supports_beforest_ops
-
-    client = Mock()
-    client.agent = "chatbot"
-    client.info = ServiceMetadata(
-        default_agent="beforest-agent",
-        agents=[
-            AgentInfo(key="beforest-agent", description="Beforest"),
-            AgentInfo(key="chatbot", description="Chatbot"),
-        ],
-        default_model=OpenAIModelName.GPT_5_NANO,
-        models=[OpenAIModelName.GPT_5_NANO],
-    )
-
-    assert _supports_beforest_ops(client) is True
-
-
-def test_beforest_ops_view_requires_password(mock_agent_client, monkeypatch) -> None:
-    monkeypatch.setenv("BEFOREST_OPS_PASSWORD", "secret")
-    at = AppTest.from_file("../../src/streamlit_app.py")
-    at.query_params["view"] = "beforest_ops"
-    at.run()
-
-    assert at.title[0].value == "Beforest Ops"
-    assert at.subheader[0].value == "Beforest Ops Login"
-    assert at.text_input[0].label == "Password"
-    assert len(at.chat_input) == 0
     assert not at.exception
 
 

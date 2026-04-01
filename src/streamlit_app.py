@@ -3,7 +3,6 @@ import os
 import urllib.parse
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -28,8 +27,6 @@ from voice import VoiceManager
 APP_TITLE = "Agent Service Toolkit"
 APP_ICON = "🧰"
 USER_ID_COOKIE = "user_id"
-OPS_VIEW_QUERY_PARAM = "view"
-OPS_VIEW_NAME = "beforest_ops"
 
 
 def get_or_create_user_id() -> str:
@@ -56,154 +53,9 @@ def get_or_create_user_id() -> str:
     return user_id
 
 
-def _is_beforest_ops_view() -> bool:
-    return st.query_params.get(OPS_VIEW_QUERY_PARAM) == OPS_VIEW_NAME
-
-
-def _supports_beforest_ops(agent_client: AgentClient) -> bool:
-    if agent_client.agent == "beforest-agent":
-        return True
-    if agent_client.info is None:
-        return False
-    return any(agent.key == "beforest-agent" for agent in agent_client.info.agents)
-
-
-def _format_handover_timestamp(timestamp: float | None) -> str:
-    if not timestamp:
-        return "Unknown"
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _beforest_ops_password() -> str:
-    return os.getenv("BEFOREST_OPS_PASSWORD", "").strip()
-
-
-def _beforest_ops_is_authenticated() -> bool:
-    return bool(st.session_state.get("beforest_ops_authenticated"))
-
-
-def render_beforest_ops_login() -> bool:
-    expected_password = _beforest_ops_password()
-    if not expected_password:
-        st.error("Beforest ops access is not configured. Set BEFOREST_OPS_PASSWORD first.")
-        return False
-
-    st.subheader("Beforest Ops Login")
-    password = st.text_input(
-        "Password",
-        type="password",
-        key="beforest_ops_password_input",
-        placeholder="Enter admin password",
-    )
-    if st.button("Unlock Ops", use_container_width=True):
-        if password == expected_password:
-            st.session_state.beforest_ops_authenticated = True
-            st.rerun()
-        st.error("Incorrect password.")
-    return False
-
-
-def render_beforest_ops(agent_client: AgentClient) -> None:
-    st.caption("Internal handover controls for Beforest Instagram DMs.")
-    contact_id = st.text_input(
-        "ManyChat Contact ID",
-        key="beforest_ops_contact_id",
-        help="Use the ManyChat subscriber/contact id for the Instagram user.",
-    ).strip()
-    operator = st.text_input(
-        "Operator Name",
-        key="beforest_ops_operator",
-        help="Who is taking or releasing the conversation.",
-    ).strip()
-    note = st.text_area(
-        "Handover Note",
-        key="beforest_ops_note",
-        height=80,
-        placeholder="Founder taking over partnership lead",
-    ).strip()
-
-    if "beforest_ops_status" not in st.session_state:
-        st.session_state.beforest_ops_status = None
-
-    col_check, col_takeover = st.columns(2)
-    if col_check.button("Check Status", use_container_width=True, disabled=not contact_id):
-        try:
-            st.session_state.beforest_ops_status = agent_client.get_beforest_handover_status(
-                contact_id
-            )
-        except AgentClientError as exc:
-            st.error(f"Could not load status: {exc}")
-
-    if col_takeover.button("Take Over", use_container_width=True, disabled=not contact_id):
-        try:
-            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
-                contact_id=contact_id,
-                status="human",
-                updated_by=operator or "operator",
-                note=note or "Manual takeover from ops panel",
-            )
-            st.success("Bot paused for this contact. Human can reply manually now.")
-        except AgentClientError as exc:
-            st.error(f"Could not apply takeover: {exc}")
-
-    col_pause, col_resume = st.columns(2)
-    if col_pause.button("Pause Bot", use_container_width=True, disabled=not contact_id):
-        try:
-            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
-                contact_id=contact_id,
-                status="paused",
-                updated_by=operator or "operator",
-                note=note or "Bot paused from ops panel",
-            )
-            st.success("Bot paused for this contact.")
-        except AgentClientError as exc:
-            st.error(f"Could not pause bot: {exc}")
-
-    if col_resume.button("Resume Bot", use_container_width=True, disabled=not contact_id):
-        try:
-            st.session_state.beforest_ops_status = agent_client.set_beforest_handover(
-                contact_id=contact_id,
-                status="bot",
-                updated_by=operator or "operator",
-                note=note or "Bot resumed from ops panel",
-            )
-            st.success("Bot resumed for this contact.")
-        except AgentClientError as exc:
-            st.error(f"Could not resume bot: {exc}")
-
-    status_payload = st.session_state.get("beforest_ops_status")
-    if isinstance(status_payload, dict) and status_payload:
-        st.markdown(f"**Current Status:** `{status_payload.get('handover_status', 'bot')}`")
-        st.caption(
-            f"Updated by: {status_payload.get('updated_by', '') or 'system'}"
-            f" at {_format_handover_timestamp(status_payload.get('updated_at'))}"
-        )
-        if status_payload.get("note"):
-            st.write(status_payload["note"])
-
-
-def render_beforest_ops_page(agent_client: AgentClient) -> None:
-    st.title("Beforest Ops")
-    st.caption("Minimal admin page for Instagram DM handover control.")
-    if not _beforest_ops_is_authenticated():
-        render_beforest_ops_login()
-        return
-
-    top_col, logout_col = st.columns([4, 1])
-    with top_col:
-        st.write("Manage who owns a conversation: bot, human, or paused.")
-    with logout_col:
-        if st.button("Logout", use_container_width=True):
-            st.session_state.beforest_ops_authenticated = False
-            st.rerun()
-
-    render_beforest_ops(agent_client)
-
-
 async def main() -> None:
-    is_ops_view = _is_beforest_ops_view()
     st.set_page_config(
-        page_title="Beforest Ops" if is_ops_view else APP_TITLE,
+        page_title=APP_TITLE,
         page_icon=APP_ICON,
         menu_items={},
     )
@@ -243,10 +95,6 @@ async def main() -> None:
             st.markdown("The service might be booting up. Try again in a few seconds.")
             st.stop()
     agent_client: AgentClient = st.session_state.agent_client
-
-    if is_ops_view:
-        render_beforest_ops_page(agent_client)
-        return
 
     # Initialize voice manager (once per session)
     if "voice_manager" not in st.session_state:

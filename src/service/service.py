@@ -1,7 +1,9 @@
+import hashlib
 import inspect
 import json
 import logging
 import re
+import secrets
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -11,8 +13,17 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid4
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, status
-from fastapi.responses import StreamingResponse
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Form,
+    HTTPException,
+    Request,
+    status,
+)
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
@@ -56,11 +67,213 @@ from service.utils import (
 
 warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
+BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
     """Generate idiomatic operation IDs for OpenAPI client generation."""
     return route.name
+
+
+def _beforest_ops_password_value() -> str | None:
+    if not settings.BEFOREST_OPS_PASSWORD:
+        return None
+    return settings.BEFOREST_OPS_PASSWORD.get_secret_value().strip() or None
+
+
+def _beforest_ops_cookie_value() -> str | None:
+    password = _beforest_ops_password_value()
+    if not password:
+        return None
+    secret_source = password
+    if settings.AUTH_SECRET:
+        secret_source += "|" + settings.AUTH_SECRET.get_secret_value()
+    elif settings.AGENT_SHARED_SECRET:
+        secret_source += "|" + settings.AGENT_SHARED_SECRET.get_secret_value()
+    digest = hashlib.sha256(secret_source.encode("utf-8")).hexdigest()
+    return digest
+
+
+def _beforest_ops_authenticated(request: Request) -> bool:
+    expected_cookie = _beforest_ops_cookie_value()
+    if not expected_cookie:
+        return False
+    actual_cookie = str(request.cookies.get(BEFOREST_OPS_COOKIE_NAME, "") or "")
+    return bool(actual_cookie) and secrets.compare_digest(actual_cookie, expected_cookie)
+
+
+def _escape_html(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
+
+
+def _render_beforest_admin_page(
+    *,
+    authenticated: bool,
+    contact_id: str = "",
+    status_payload: dict[str, Any] | None = None,
+    message: str = "",
+    error: str = "",
+) -> str:
+    safe_contact_id = _escape_html(contact_id)
+    safe_message = _escape_html(message)
+    safe_error = _escape_html(error)
+    status_markup = ""
+    if status_payload:
+        handover_status = _escape_html(str(status_payload.get("handover_status", "bot")))
+        updated_by = _escape_html(str(status_payload.get("updated_by", "") or "system"))
+        note = _escape_html(str(status_payload.get("note", "") or ""))
+        updated_at_raw = status_payload.get("updated_at")
+        updated_at = "Unknown"
+        if isinstance(updated_at_raw, (int, float)):
+            updated_at = datetime.fromtimestamp(float(updated_at_raw)).strftime("%Y-%m-%d %H:%M:%S")
+        status_markup = f"""
+        <section class="panel">
+          <div class="label">Current Status</div>
+          <div class="status">{handover_status}</div>
+          <div class="meta">Updated by {updated_by} at {updated_at}</div>
+          <div class="note">{note}</div>
+        </section>
+        """
+    login_markup = """
+    <form method="post" action="/admin/beforest/login" class="stack">
+      <label>Password
+        <input type="password" name="password" placeholder="Enter admin password" />
+      </label>
+      <button type="submit">Unlock Ops</button>
+    </form>
+    """
+    controls_markup = f"""
+    <form method="get" action="/admin/beforest" class="stack">
+      <label>ManyChat Contact ID
+        <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
+      </label>
+      <button class="secondary" type="submit">Check Status</button>
+    </form>
+    {status_markup}
+    <form method="post" action="/admin/beforest/handover" class="stack">
+      <label>ManyChat Contact ID
+        <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
+      </label>
+      <div class="row">
+        <label>Operator
+          <input type="text" name="updated_by" placeholder="founder" />
+        </label>
+      </div>
+      <label>Note
+        <textarea name="note" placeholder="Founder taking over partnership conversation"></textarea>
+      </label>
+      <div class="actions">
+        <button type="submit" name="status" value="human">Take Over</button>
+        <button class="warn" type="submit" name="status" value="paused">Pause Bot</button>
+        <button class="secondary" type="submit" name="status" value="bot">Resume Bot</button>
+      </div>
+    </form>
+    """
+
+    body = f"""
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Beforest Ops</title>
+        <style>
+          :root {{
+            --bg: #f4efe4;
+            --panel: #fffaf0;
+            --ink: #233126;
+            --muted: #5f6f61;
+            --line: #d7ccb3;
+            --accent: #2f5e43;
+            --warn: #9c5c22;
+            --danger: #8a2f2f;
+          }}
+          * {{ box-sizing: border-box; }}
+          body {{
+            margin: 0;
+            font-family: Georgia, "Times New Roman", serif;
+            background: linear-gradient(180deg, #f4efe4 0%, #ece3d3 100%);
+            color: var(--ink);
+          }}
+          .shell {{
+            max-width: 560px;
+            margin: 48px auto;
+            padding: 0 20px;
+          }}
+          .panel {{
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 10px 30px rgba(35, 49, 38, 0.08);
+          }}
+          h1 {{ margin: 0 0 8px; font-size: 32px; }}
+          p, .meta, .note {{ color: var(--muted); line-height: 1.45; }}
+          .stack {{ display: grid; gap: 14px; }}
+          label {{ display: grid; gap: 6px; font-weight: 600; }}
+          input, textarea {{
+            width: 100%;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: #fff;
+            color: var(--ink);
+            font: inherit;
+          }}
+          textarea {{ min-height: 92px; resize: vertical; }}
+          .row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }}
+          .actions {{ display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }}
+          button {{
+            width: 100%;
+            border: 0;
+            border-radius: 10px;
+            padding: 12px 14px;
+            background: var(--accent);
+            color: #fff;
+            font: inherit;
+            font-weight: 600;
+            cursor: pointer;
+          }}
+          button.secondary {{ background: #6d7e70; }}
+          button.warn {{ background: var(--warn); }}
+          .banner, .error {{
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 14px;
+          }}
+          .banner {{ background: #edf6ef; color: #214a33; }}
+          .error {{ background: #f9e6e6; color: var(--danger); }}
+          .label {{ font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }}
+          .status {{ font-size: 28px; margin-top: 6px; text-transform: lowercase; }}
+          .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
+          form.inline {{ margin: 0; }}
+        </style>
+      </head>
+      <body>
+        <div class="shell">
+          <div class="panel stack">
+            <div class="topbar">
+              <div>
+                <h1>Beforest Ops</h1>
+                <p>Minimal admin page for Instagram DM handover control.</p>
+              </div>
+              {"<form class='inline' method='post' action='/admin/beforest/logout'><button class='secondary' type='submit'>Logout</button></form>" if authenticated else ""}
+            </div>
+            {f"<div class='banner'>{safe_message}</div>" if safe_message else ""}
+            {f"<div class='error'>{safe_error}</div>" if safe_error else ""}
+            {controls_markup if authenticated else login_markup}
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+    return body
 
 
 def verify_bearer(
@@ -1122,6 +1335,92 @@ async def info() -> ServiceMetadata:
 @router.get("/health/knowledge")
 async def knowledge_health() -> dict[str, object]:
     return get_knowledge_source_status()
+
+
+@app.get("/admin/beforest", response_class=HTMLResponse)
+async def beforest_admin_page(
+    request: Request,
+    contact_id: str = "",
+    message: str = "",
+    error: str = "",
+) -> HTMLResponse:
+    if not _beforest_ops_authenticated(request):
+        return HTMLResponse(
+            _render_beforest_admin_page(authenticated=False, contact_id=contact_id, error=error)
+        )
+
+    status_payload: dict[str, Any] | None = None
+    if contact_id:
+        history_events = await _load_beforest_events_from_convex(contact_id)
+        automation_state = _derive_beforest_automation_state(history_events)
+        status_payload = {
+            "handover_status": automation_state.status if automation_state is not None else "bot",
+            "updated_at": automation_state.updated_at if automation_state is not None else None,
+            "updated_by": automation_state.updated_by if automation_state is not None else "",
+            "note": automation_state.note if automation_state is not None else "",
+        }
+    return HTMLResponse(
+        _render_beforest_admin_page(
+            authenticated=True,
+            contact_id=contact_id,
+            status_payload=status_payload,
+            message=message,
+            error=error,
+        )
+    )
+
+
+@app.post("/admin/beforest/login")
+async def beforest_admin_login(password: str = Form(...)) -> RedirectResponse:
+    expected_password = _beforest_ops_password_value()
+    if not expected_password or not secrets.compare_digest(password, expected_password):
+        return RedirectResponse("/admin/beforest?error=Incorrect+password", status_code=303)
+
+    response = RedirectResponse("/admin/beforest", status_code=303)
+    cookie_value = _beforest_ops_cookie_value()
+    if cookie_value:
+        response.set_cookie(
+            BEFOREST_OPS_COOKIE_NAME,
+            cookie_value,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=60 * 60 * 12,
+        )
+    return response
+
+
+@app.post("/admin/beforest/logout")
+async def beforest_admin_logout() -> RedirectResponse:
+    response = RedirectResponse("/admin/beforest", status_code=303)
+    response.delete_cookie(BEFOREST_OPS_COOKIE_NAME)
+    return response
+
+
+@app.post("/admin/beforest/handover")
+async def beforest_admin_handover(
+    request: Request,
+    contact_id: str = Form(...),
+    status_value: Literal["bot", "human", "paused"] = Form(..., alias="status"),
+    updated_by: str = Form(""),
+    note: str = Form(""),
+) -> RedirectResponse:
+    if not _beforest_ops_authenticated(request):
+        return RedirectResponse("/admin/beforest?error=Please+login+again", status_code=303)
+
+    await beforest_handover(
+        BeforestHandoverRequest(
+            status=status_value,
+            contact_id=contact_id,
+            updated_by=updated_by or "ops",
+            note=note or "",
+        )
+    )
+    success_message = f"Updated {contact_id} to {status_value}"
+    return RedirectResponse(
+        f"/admin/beforest?contact_id={contact_id}&message={success_message.replace(' ', '+')}",
+        status_code=303,
+    )
 
 
 @router.post("/beforest/handover")
