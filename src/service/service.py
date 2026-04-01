@@ -5,6 +5,7 @@ import re
 import warnings
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime
 from typing import Annotated, Any
 from uuid import UUID, uuid4
@@ -15,7 +16,14 @@ from fastapi.responses import StreamingResponse
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from langchain_core._api import LangChainBetaWarning
-from langchain_core.messages import AIMessage, AIMessageChunk, AnyMessage, HumanMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    AIMessageChunk,
+    AnyMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langchain_core.runnables import RunnableConfig
 from langfuse import Langfuse  # type: ignore[import-untyped]
 from langfuse.langchain import (
@@ -126,6 +134,8 @@ class BeforestReplyResponse(BaseModel):
 
 BEFOREST_DM_TARGET_LIMIT = 220
 BEFOREST_DM_MAX_SENTENCES = 2
+BEFOREST_SESSION_AUTO_CLOSE_SECONDS = 30 * 60
+BEFOREST_SESSION_CONTEXT_LOOKBACK_SECONDS = 24 * 60 * 60
 _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "current",
     "currently",
@@ -137,6 +147,46 @@ _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "available",
     "latest",
 )
+_BEFOREST_SESSION_TYPE_KEYWORDS: dict[str, tuple[str, ...]] = {
+    "creator": ("creator", "influencer", "coverage", "filmmaker", "reels", "content"),
+    "partnership": ("partner", "partnership", "collaborate", "collaboration", "brand"),
+    "event": ("retreat", "event", "workshop", "facilitator", "host", "offsite", "gathering"),
+    "stay": ("stay", "hospitality", "book", "booking", "family", "weekend", "visit"),
+    "experience": ("experience", "experiences", "retreat", "workshop"),
+    "product": ("bewild", "produce", "product", "products", "shop", "coffee", "spices"),
+    "collective": ("collective", "collectives", "hammiyala", "bhopal", "poomaale", "coorg"),
+}
+_BEFOREST_TRACKED_SESSION_TYPES = {"creator", "partnership", "event", "stay", "experience"}
+_BEFOREST_CONFIRMATION_RE = re.compile(
+    r"\b(thanks|thank you|got it|understood|works|perfect|great|cool|noted|that helps)\b",
+    flags=re.IGNORECASE,
+)
+_BEFOREST_FOLLOW_UP_RE = re.compile(
+    r"\?|"
+    r"\b(share|tell me|which dates|what dates|what location|what city|which city|"
+    r"what budget|what kind|let me know|send over|send me|feel free to share)\b",
+    flags=re.IGNORECASE,
+)
+_BEFOREST_AMBIGUOUS_FOLLOW_UP_RE = re.compile(
+    r"\b("
+    r"yes|yeah|yep|ok|okay|sure|please|continue|following up|follow up|"
+    r"what dates|which dates|what location|which location|where exactly|how much|"
+    r"details|more info|more details|link|send link|timeline|budget"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+@dataclass
+class BeforestSessionState:
+    session_id: str
+    status: str
+    session_type: str
+    summary: str
+    last_user_goal: str
+    last_activity_at: float
+    resolved_at: float | None = None
+    closed_reason: str = ""
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
     "january": 1,
@@ -301,6 +351,232 @@ def _clamp_beforest_dm_reply(text: str) -> str:
         clipped = clipped[:last_space]
     return clipped.rstrip(' ,;:') + "…"
 
+
+def _short_session_text(text: str, *, limit: int = 140) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if len(normalized) <= limit:
+        return normalized
+    clipped = normalized[: limit - 1].rstrip()
+    last_space = clipped.rfind(" ")
+    if last_space > 40:
+        clipped = clipped[:last_space]
+    return clipped.rstrip(" ,;:") + "…"
+
+
+def _infer_beforest_session_type(
+    message: str,
+    previous_type: str = "",
+    *,
+    allow_previous_fallback: bool = True,
+) -> str:
+    lowered = message.lower()
+    for session_type, keywords in _BEFOREST_SESSION_TYPE_KEYWORDS.items():
+        if any(keyword in lowered for keyword in keywords):
+            return session_type
+    if allow_previous_fallback and previous_type:
+        return previous_type
+    return "general"
+
+
+def _message_is_confirmation(message: str) -> bool:
+    return bool(_BEFOREST_CONFIRMATION_RE.search(message))
+
+
+def _reply_needs_follow_up(reply_text: str) -> bool:
+    return bool(_BEFOREST_FOLLOW_UP_RE.search(reply_text))
+
+
+def _session_matches_message(session: BeforestSessionState, message: str) -> bool:
+    inferred_type = _infer_beforest_session_type(message, allow_previous_fallback=False)
+    if inferred_type != "general":
+        return inferred_type == session.session_type
+    if session.session_type == "general":
+        return False
+    if _message_is_confirmation(message):
+        return True
+    normalized = re.sub(r"\s+", " ", message).strip().lower()
+    if len(normalized.split()) <= 6 and _BEFOREST_AMBIGUOUS_FOLLOW_UP_RE.search(normalized):
+        return True
+    return False
+
+
+def _load_session_state_from_event(item: dict[str, Any]) -> BeforestSessionState | None:
+    raw_payload = item.get("rawPayload", {})
+    if not isinstance(raw_payload, dict):
+        return None
+    session_payload = raw_payload.get("session", {})
+    if not isinstance(session_payload, dict):
+        return None
+
+    session_id = str(session_payload.get("session_id", "") or "").strip()
+    status = str(session_payload.get("status", "") or "").strip()
+    session_type = str(session_payload.get("session_type", "") or "").strip()
+    summary = str(session_payload.get("summary", "") or "").strip()
+    last_user_goal = str(session_payload.get("last_user_goal", "") or "").strip()
+    if not session_id or not status or not session_type:
+        return None
+
+    last_activity_at_raw = session_payload.get("last_activity_at", 0.0)
+    try:
+        last_activity_at = float(last_activity_at_raw)
+    except (TypeError, ValueError):
+        return None
+
+    resolved_at_raw = session_payload.get("resolved_at")
+    try:
+        resolved_at = float(resolved_at_raw) if resolved_at_raw is not None else None
+    except (TypeError, ValueError):
+        resolved_at = None
+
+    return BeforestSessionState(
+        session_id=session_id,
+        status=status,
+        session_type=session_type,
+        summary=summary,
+        last_user_goal=last_user_goal,
+        last_activity_at=last_activity_at,
+        resolved_at=resolved_at,
+        closed_reason=str(session_payload.get("closed_reason", "") or "").strip(),
+    )
+
+
+def _derive_beforest_session_state(
+    events: list[dict[str, Any]],
+    *,
+    current_message: str,
+    now_ts: float,
+) -> BeforestSessionState | None:
+    latest_session: BeforestSessionState | None = None
+    for item in reversed(events):
+        if not isinstance(item, dict):
+            continue
+        latest_session = _load_session_state_from_event(item)
+        if latest_session is not None:
+            break
+
+    if latest_session is None:
+        return None
+    if now_ts - latest_session.last_activity_at > BEFOREST_SESSION_CONTEXT_LOOKBACK_SECONDS:
+        return None
+    if (
+        latest_session.status == "awaiting_confirmation"
+        and now_ts - latest_session.last_activity_at > BEFOREST_SESSION_AUTO_CLOSE_SECONDS
+    ):
+        latest_session.status = "auto_closed"
+        latest_session.closed_reason = "timeout"
+    return latest_session
+
+
+def _build_beforest_session_context(
+    session: BeforestSessionState | None,
+    *,
+    current_message: str,
+) -> SystemMessage | None:
+    if session is None or not session.summary:
+        return None
+    if not _session_matches_message(session, current_message):
+        return None
+
+    lines = [
+        "Beforest DM session context.",
+        f"Previous session type: {session.session_type}.",
+        f"Previous session status: {session.status}.",
+        f"Previous session summary: {session.summary}",
+    ]
+    if session.status in {"open", "awaiting_confirmation"}:
+        lines.append("If relevant, continue this thread naturally instead of restarting from scratch.")
+    else:
+        lines.append("If relevant, briefly reference the previous discussion before answering.")
+    return SystemMessage(content="\n".join(lines))
+
+
+def _should_continue_beforest_session(
+    session: BeforestSessionState | None,
+    *,
+    current_message: str,
+    now_ts: float,
+) -> bool:
+    if session is None:
+        return False
+    if session.status not in {"open", "awaiting_confirmation"}:
+        return False
+    if now_ts - session.last_activity_at > BEFOREST_SESSION_CONTEXT_LOOKBACK_SECONDS:
+        return False
+    return _session_matches_message(session, current_message)
+
+
+def _build_beforest_session_summary(
+    *,
+    previous_session: BeforestSessionState | None,
+    message: str,
+    reply_text: str,
+) -> str:
+    current_summary = _short_session_text(
+        f"User asked: {_short_session_text(message, limit=80)} "
+        f"Agent replied: {_short_session_text(reply_text, limit=110)}",
+        limit=180,
+    )
+    if previous_session and previous_session.summary:
+        return _short_session_text(
+            f"{previous_session.summary} Then {current_summary}",
+            limit=180,
+        )
+    return current_summary
+
+
+def _next_beforest_session_state(
+    *,
+    previous_session: BeforestSessionState | None,
+    message: str,
+    reply_text: str,
+    now_ts: float,
+) -> BeforestSessionState:
+    inferred_type = _infer_beforest_session_type(
+        message,
+        previous_session.session_type if previous_session is not None else "",
+    )
+    continue_existing = (
+        _should_continue_beforest_session(
+            previous_session,
+            current_message=message,
+            now_ts=now_ts,
+        )
+    )
+    session_id = previous_session.session_id if continue_existing else str(uuid4())
+
+    if (
+        previous_session is not None
+        and previous_session.status == "awaiting_confirmation"
+        and _session_matches_message(previous_session, message)
+        and _message_is_confirmation(message)
+    ):
+        status = "solved"
+        resolved_at = now_ts
+        closed_reason = "user_confirmed"
+    elif inferred_type in _BEFOREST_TRACKED_SESSION_TYPES:
+        status = "open" if _reply_needs_follow_up(reply_text) else "awaiting_confirmation"
+        resolved_at = None
+        closed_reason = ""
+    else:
+        status = "solved"
+        resolved_at = now_ts
+        closed_reason = "faq_completed"
+
+    return BeforestSessionState(
+        session_id=session_id,
+        status=status,
+        session_type=inferred_type,
+        summary=_build_beforest_session_summary(
+            previous_session=previous_session if continue_existing else None,
+            message=message,
+            reply_text=reply_text,
+        ),
+        last_user_goal=_short_session_text(message, limit=90),
+        last_activity_at=now_ts,
+        resolved_at=resolved_at,
+        closed_reason=closed_reason,
+    )
+
 def _convex_history_url() -> str | None:
     if settings.CONVEX_HTTP_ACTION_URL:
         return str(settings.CONVEX_HTTP_ACTION_URL).rstrip("/")
@@ -317,7 +593,7 @@ def _convex_base_url() -> str | None:
     return None
 
 
-async def _load_beforest_history_from_convex(contact_id: str) -> list[HumanMessage | AIMessage]:
+async def _load_beforest_events_from_convex(contact_id: str) -> list[dict[str, Any]]:
     base_url = _convex_base_url()
     if not base_url or not settings.AGENT_SHARED_SECRET:
         return []
@@ -333,9 +609,12 @@ async def _load_beforest_history_from_convex(contact_id: str) -> list[HumanMessa
 
     if not isinstance(payload, list):
         return []
+    return [item for item in payload if isinstance(item, dict)]
 
+
+def _beforest_messages_from_events(events: list[dict[str, Any]]) -> list[HumanMessage | AIMessage]:
     messages: list[HumanMessage | AIMessage] = []
-    for item in payload:
+    for item in events:
         if not isinstance(item, dict):
             continue
         human_text = str(item.get("message", "") or "").strip()
@@ -347,6 +626,10 @@ async def _load_beforest_history_from_convex(contact_id: str) -> list[HumanMessa
     return messages
 
 
+async def _load_beforest_history_from_convex(contact_id: str) -> list[HumanMessage | AIMessage]:
+    return _beforest_messages_from_events(await _load_beforest_events_from_convex(contact_id))
+
+
 async def _save_beforest_event_to_convex(
     *,
     user_id: str | None,
@@ -355,6 +638,7 @@ async def _save_beforest_event_to_convex(
     inbound_message: str,
     reply_text: str,
     manychat_subscriber_id: str | None,
+    session_state: BeforestSessionState | None = None,
 ) -> None:
     convex_url = _convex_history_url()
     if not convex_url or not settings.AGENT_SHARED_SECRET:
@@ -392,6 +676,8 @@ async def _save_beforest_event_to_convex(
             "subscriberData": subscriber_data,
         },
     }
+    if session_state is not None:
+        payload["rawPayload"]["session"] = asdict(session_state)
 
     if user_id:
         payload["instagramUserId"] = user_id
@@ -581,6 +867,7 @@ async def knowledge_health() -> dict[str, object]:
 @router.post("/beforest/reply")
 async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse:
     agent = get_agent("beforest-agent")
+    now_ts = datetime.now().timestamp()
     contact_id = request.manychat_subscriber_id or request.user_id
     if not contact_id:
         for key in (
@@ -602,10 +889,31 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
         agent_config={"subscriber_data": request.subscriber_data},
     )
     kwargs, _ = await _handle_input(user_input, agent)
-    history_messages = (
-        await _load_beforest_history_from_convex(str(contact_id)) if contact_id else []
+    history_events = await _load_beforest_events_from_convex(str(contact_id)) if contact_id else []
+    history_messages = _beforest_messages_from_events(history_events)
+    prior_session = _derive_beforest_session_state(
+        history_events,
+        current_message=request.message,
+        now_ts=now_ts,
     )
-    kwargs["input"] = {"messages": [*history_messages, HumanMessage(content=request.message)]}
+    continue_existing_session = _should_continue_beforest_session(
+        prior_session,
+        current_message=request.message,
+        now_ts=now_ts,
+    )
+    history_messages = (
+        _beforest_messages_from_events(history_events) if continue_existing_session else []
+    )
+    session_context = _build_beforest_session_context(
+        prior_session,
+        current_message=request.message,
+    )
+    input_messages: list[HumanMessage | AIMessage | SystemMessage] = []
+    if session_context is not None:
+        input_messages.append(session_context)
+    input_messages.extend(history_messages)
+    input_messages.append(HumanMessage(content=request.message))
+    kwargs["input"] = {"messages": input_messages}
     response_events: list[tuple[str, Any]] = await agent.ainvoke(
         **kwargs, stream_mode=["updates", "values"]
     )  # type: ignore[arg-type]
@@ -619,6 +927,12 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
 
     reply_text = _clamp_beforest_dm_reply(
         _enforce_current_experiences_freshness(request.message, output.content)
+    )
+    next_session = _next_beforest_session_state(
+        previous_session=prior_session,
+        message=request.message,
+        reply_text=reply_text,
+        now_ts=now_ts,
     )
 
     config_payload = kwargs.get("config", {})
@@ -636,6 +950,7 @@ async def beforest_reply(request: BeforestReplyRequest) -> BeforestReplyResponse
             inbound_message=request.message,
             reply_text=reply_text,
             manychat_subscriber_id=request.manychat_subscriber_id,
+            session_state=next_session,
         )
     except Exception as exc:
         logger.error(f"Failed to write Beforest event to Convex: {exc}")

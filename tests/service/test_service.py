@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -560,15 +561,72 @@ def test_enforce_current_experiences_freshness_rewrites_stale_month_year_date() 
     assert "January 2026" not in result
 
 
-@patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
+def test_derive_beforest_session_state_auto_closes_stale_confirmation() -> None:
+    from service.service import _derive_beforest_session_state
+
+    events = [
+        {
+            "rawPayload": {
+                "session": {
+                    "session_id": "sess-1",
+                    "status": "awaiting_confirmation",
+                    "session_type": "creator",
+                    "summary": "Creator collaboration ask for Coorg stay.",
+                    "last_user_goal": "creator collab",
+                    "last_activity_at": 0,
+                    "resolved_at": None,
+                    "closed_reason": "",
+                }
+            }
+        }
+    ]
+
+    result = _derive_beforest_session_state(
+        events,
+        current_message="Following up on the creator collab",
+        now_ts=31 * 60,
+    )
+
+    assert result is not None
+    assert result.status == "auto_closed"
+    assert result.closed_reason == "timeout"
+
+
+def test_next_beforest_session_state_reopens_solved_topic_with_new_session_id() -> None:
+    from service.service import BeforestSessionState, _next_beforest_session_state
+
+    previous_session = BeforestSessionState(
+        session_id="sess-1",
+        status="solved",
+        session_type="partnership",
+        summary="Partnership details were shared.",
+        last_user_goal="partnership details",
+        last_activity_at=datetime.now().timestamp(),
+        resolved_at=datetime.now().timestamp(),
+        closed_reason="user_confirmed",
+    )
+
+    result = _next_beforest_session_state(
+        previous_session=previous_session,
+        message="We want to discuss a partnership for our brand.",
+        reply_text="Please share your brand, city, and timeline.",
+        now_ts=datetime.now().timestamp(),
+    )
+
+    assert result.session_id != "sess-1"
+    assert result.session_type == "partnership"
+    assert result.status == "open"
+
+
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 def test_beforest_reply_clamps_long_reply(
     mock_save_beforest_event,
-    mock_load_beforest_history,
+    mock_load_beforest_events,
     test_client,
 ):
     long_reply = " ".join(["Beforest builds regenerative communities."] * 30)
-    mock_load_beforest_history.return_value = []
+    mock_load_beforest_events.return_value = []
 
     beforest_agent = AsyncMock()
     beforest_agent.ainvoke.return_value = [
@@ -585,13 +643,14 @@ def test_beforest_reply_clamps_long_reply(
     payload = response.json()
     assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].status == "solved"
 
 
-@patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 def test_beforest_reply_rewrites_stale_current_experiences_reply(
     mock_save_beforest_event,
-    mock_load_beforest_history,
+    mock_load_beforest_events,
     test_client,
 ):
     stale_reply = (
@@ -600,7 +659,7 @@ def test_beforest_reply_rewrites_stale_current_experiences_reply(
         "Family Roots in Coorg (Jan 4, 2026), and "
         "Coffee Safari in Coorg (Jan 26, 2026)."
     )
-    mock_load_beforest_history.return_value = []
+    mock_load_beforest_events.return_value = []
 
     beforest_agent = AsyncMock()
     beforest_agent.ainvoke.return_value = [
@@ -619,3 +678,154 @@ def test_beforest_reply_rewrites_stale_current_experiences_reply(
     assert "Dec 14, 2025" not in payload["reply"]
     assert len(payload["reply"]) <= 220
     assert mock_save_beforest_event.await_args.kwargs["reply_text"] == payload["reply"]
+
+
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+def test_beforest_reply_continues_matching_prior_session_and_saves_context(
+    mock_save_beforest_event,
+    mock_load_beforest_events,
+    test_client,
+):
+    prior_events = [
+        {
+            "message": "I want to collaborate with Beforest.",
+            "agentReplyText": "Please share your details and goals.",
+            "rawPayload": {
+                "session": {
+                    "session_id": "sess-creator-1",
+                    "status": "open",
+                    "session_type": "partnership",
+                    "summary": "Partnership conversation started.",
+                    "last_user_goal": "collaborate with Beforest",
+                    "last_activity_at": datetime.now().timestamp(),
+                    "resolved_at": None,
+                    "closed_reason": "",
+                }
+            },
+        }
+    ]
+    mock_load_beforest_events.return_value = prior_events
+
+    beforest_agent = AsyncMock()
+    beforest_agent.ainvoke.return_value = [
+        ("values", {"messages": [AIMessage(content="Share your brand, scope, and timeline.")]}),
+    ]
+
+    with patch("service.service.get_agent", return_value=beforest_agent):
+        response = test_client.post(
+            "/beforest/reply",
+            json={
+                "message": "We want to discuss a partnership.",
+                "user_id": "test-contact-1",
+                "push_to_manychat": False,
+            },
+        )
+
+    assert response.status_code == 200
+    input_messages = beforest_agent.ainvoke.await_args.kwargs["input"]["messages"]
+    assert input_messages[0].content.startswith("Beforest DM session context.")
+    assert "Partnership conversation started." in input_messages[0].content
+    assert len(input_messages) == 4
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].session_id == "sess-creator-1"
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].session_type == "partnership"
+
+
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+def test_beforest_reply_starts_fresh_for_unrelated_topic(
+    mock_save_beforest_event,
+    mock_load_beforest_events,
+    test_client,
+):
+    prior_events = [
+        {
+            "message": "We want to explore a partnership.",
+            "agentReplyText": "Please share your brand brief.",
+            "rawPayload": {
+                "session": {
+                    "session_id": "sess-partner-1",
+                    "status": "open",
+                    "session_type": "partnership",
+                    "summary": "Partnership conversation started.",
+                    "last_user_goal": "partnership ask",
+                    "last_activity_at": datetime.now().timestamp(),
+                    "resolved_at": None,
+                    "closed_reason": "",
+                }
+            },
+        }
+    ]
+    mock_load_beforest_events.return_value = prior_events
+
+    beforest_agent = AsyncMock()
+    beforest_agent.ainvoke.return_value = [
+        ("values", {"messages": [AIMessage(content="You can browse Bewild products at https://bewild.life.")]}),
+    ]
+
+    with patch("service.service.get_agent", return_value=beforest_agent):
+        response = test_client.post(
+            "/beforest/reply",
+            json={
+                "message": "Do you sell coffee or spices?",
+                "user_id": "test-contact-2",
+                "push_to_manychat": False,
+            },
+        )
+
+    assert response.status_code == 200
+    input_messages = beforest_agent.ainvoke.await_args.kwargs["input"]["messages"]
+    assert len(input_messages) == 1
+    assert input_messages[0].content == "Do you sell coffee or spices?"
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].session_id != "sess-partner-1"
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].session_type == "product"
+
+
+@patch("service.service._load_beforest_events_from_convex", new_callable=AsyncMock)
+@patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
+def test_beforest_reply_reopens_solved_session_with_context_but_without_old_history(
+    mock_save_beforest_event,
+    mock_load_beforest_events,
+    test_client,
+):
+    prior_events = [
+        {
+            "message": "We want to discuss a partnership.",
+            "agentReplyText": "Please share your brand, scope, and timeline.",
+            "rawPayload": {
+                "session": {
+                    "session_id": "sess-partner-closed",
+                    "status": "solved",
+                    "session_type": "partnership",
+                    "summary": "Partnership details were shared.",
+                    "last_user_goal": "partnership details",
+                    "last_activity_at": datetime.now().timestamp(),
+                    "resolved_at": datetime.now().timestamp(),
+                    "closed_reason": "user_confirmed",
+                }
+            },
+        }
+    ]
+    mock_load_beforest_events.return_value = prior_events
+
+    beforest_agent = AsyncMock()
+    beforest_agent.ainvoke.return_value = [
+        ("values", {"messages": [AIMessage(content="Please share your brand, city, and dates.")]}),
+    ]
+
+    with patch("service.service.get_agent", return_value=beforest_agent):
+        response = test_client.post(
+            "/beforest/reply",
+            json={
+                "message": "We want to revisit the partnership idea.",
+                "user_id": "test-contact-3",
+                "push_to_manychat": False,
+            },
+        )
+
+    assert response.status_code == 200
+    input_messages = beforest_agent.ainvoke.await_args.kwargs["input"]["messages"]
+    assert len(input_messages) == 2
+    assert input_messages[0].content.startswith("Beforest DM session context.")
+    assert input_messages[1].content == "We want to revisit the partnership idea."
+    assert mock_save_beforest_event.await_args.kwargs["session_state"].session_id != "sess-partner-closed"
