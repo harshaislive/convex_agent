@@ -157,6 +157,7 @@ textarea {
 .conversation-row {
   display: grid;
   grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 1.5fr) 140px 220px;
+  grid-template-areas: "main preview time toggles";
   gap: 10px;
   align-items: center;
 }
@@ -239,6 +240,7 @@ textarea {
   gap: 6px;
   justify-content: flex-end;
   grid-area: toggles;
+  min-width: 0;
 }
 
 .toggle {
