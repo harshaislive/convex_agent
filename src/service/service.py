@@ -135,13 +135,7 @@ _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "today",
     "upcoming",
     "available",
-)
-_CURRENT_EXPERIENCE_REPLY_HINTS = (
-    "currently live",
-    "live for booking",
-    "currently available",
-    "available now",
-    "right now",
+    "latest",
 )
 _MONTH_NAME_TO_NUMBER = {
     "jan": 1,
@@ -187,11 +181,6 @@ def _is_current_experiences_query(message: str) -> bool:
     return any(hint in lowered for hint in _CURRENT_EXPERIENCE_QUERY_HINTS)
 
 
-def _reply_claims_current_live(reply_text: str) -> bool:
-    lowered = reply_text.lower()
-    return any(hint in lowered for hint in _CURRENT_EXPERIENCE_REPLY_HINTS)
-
-
 def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
     parsed_dates: list[date] = []
     for match in _ISO_DATE_RE.finditer(text):
@@ -225,20 +214,18 @@ def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
 def _enforce_current_experiences_freshness(message: str, reply_text: str) -> str:
     if not _is_current_experiences_query(message):
         return reply_text
-    if not _reply_claims_current_live(reply_text):
-        return reply_text
 
     today = datetime.now(UTC).date()
     parsed_dates = _extract_dates_from_text(reply_text, today=today)
     if not parsed_dates:
         return reply_text
-    if any(parsed_date >= today for parsed_date in parsed_dates):
-        return reply_text
+    if any(parsed_date < today for parsed_date in parsed_dates):
+        return (
+            "I can't confirm live experience dates here right now. "
+            "Please check https://experiences.beforest.co for the latest upcoming listings."
+        )
 
-    return (
-        "I can't confirm live experience dates here right now. "
-        "Please check https://experiences.beforest.co for the latest upcoming listings."
-    )
+    return reply_text
 
 
 def _clamp_beforest_dm_reply(text: str) -> str:

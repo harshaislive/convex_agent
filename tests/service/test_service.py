@@ -498,6 +498,37 @@ def test_enforce_current_experiences_freshness_keeps_future_live_claim() -> None
     assert result == valid_reply
 
 
+def test_enforce_current_experiences_freshness_rewrites_stale_upcoming_dates() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "Show me current Beforest experiences."
+    stale_upcoming_reply = (
+        "Our upcoming experiences include Starry Nights in Hyderabad (Dec 14, 2025), "
+        "Family Roots in Coorg (Jan 4, 2026), and Hands & Soil in Hyderabad (Feb 14, 2026)."
+    )
+
+    result = _enforce_current_experiences_freshness(message, stale_upcoming_reply)
+
+    assert "can't confirm live experience dates" in result
+    assert "https://experiences.beforest.co" in result
+    assert "Dec 14, 2025" not in result
+
+
+def test_enforce_current_experiences_freshness_rewrites_mixed_stale_and_future_dates() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "Are there any upcoming retreats or workshops?"
+    mixed_reply = (
+        "Upcoming options include Hands & Soil (Feb 14, 2026) and "
+        "SloMo retreat (May 1, 2099)."
+    )
+
+    result = _enforce_current_experiences_freshness(message, mixed_reply)
+
+    assert "can't confirm live experience dates" in result
+    assert "https://experiences.beforest.co" in result
+
+
 @patch("service.service._load_beforest_history_from_convex", new_callable=AsyncMock)
 @patch("service.service._save_beforest_event_to_convex", new_callable=AsyncMock)
 def test_beforest_reply_clamps_long_reply(
