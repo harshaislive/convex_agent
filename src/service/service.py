@@ -233,8 +233,8 @@ def _render_beforest_admin_page(
     <section class="panel stack">
       <div class="stack compact">
         <div>
-          <h2>Inbox</h2>
-          <p>Search contacts and switch bot ownership inline.</p>
+          <h2>Beforest Inbox</h2>
+          <p>Search conversations and switch ownership inline.</p>
         </div>
       </div>
       <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
@@ -242,9 +242,9 @@ def _render_beforest_admin_page(
         <button class="secondary" type="submit">Search</button>
       </form>
       <div class="legend">
-        <span><strong>Bot</strong>: replies automatically.</span>
-        <span><strong>Human</strong>: teammate/founder owns the conversation, bot stays silent.</span>
-        <span><strong>Pause</strong>: bot is muted temporarily without marking active human takeover.</span>
+        <span><strong>Bot</strong> auto-replies.</span>
+        <span><strong>Human</strong> keeps the bot silent.</span>
+        <span><strong>Pause</strong> mutes the bot temporarily.</span>
       </div>
       <div class="table-head">
         <span>Contact</span>
@@ -277,13 +277,15 @@ def _render_beforest_admin_page(
         <meta name="twitter:image" content="{safe_og_image_url}" />
         <style>
           :root {{
-            --bg: #f7f7f5;
+            --bg: #f7f7f3;
             --panel: #ffffff;
-            --ink: #191919;
-            --muted: #6f6f6b;
-            --line: #e6e6e2;
-            --accent: #191919;
-            --soft: #f1f1ef;
+            --ink: #171717;
+            --muted: #6b6f76;
+            --line: #e7e5e4;
+            --line-strong: #dbd8d3;
+            --accent: #171717;
+            --soft: #f3f3f1;
+            --soft-2: #fafaf9;
             --danger: #b42318;
           }}
           * {{ box-sizing: border-box; }}
@@ -294,22 +296,22 @@ def _render_beforest_admin_page(
             color: var(--ink);
           }}
           .shell {{
-            max-width: 1120px;
-            margin: 28px auto;
-            padding: 0 18px;
+            max-width: 1180px;
+            margin: 22px auto;
+            padding: 0 16px;
           }}
           .panel {{
             background: var(--panel);
-            border: 1px solid var(--line);
+            border: 1px solid var(--line-strong);
             border-radius: 12px;
-            padding: 18px;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+            padding: 14px;
+            box-shadow: none;
           }}
-          h1 {{ margin: 0 0 4px; font-size: 28px; font-weight: 650; }}
-          h2 {{ margin: 0 0 4px; font-size: 16px; font-weight: 650; }}
-          p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 14px; }}
-          .stack {{ display: grid; gap: 12px; }}
-          .stack.compact {{ gap: 8px; }}
+          h1 {{ margin: 0 0 4px; font-size: 26px; font-weight: 650; }}
+          h2 {{ margin: 0 0 2px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }}
+          p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 13px; }}
+          .stack {{ display: grid; gap: 10px; }}
+          .stack.compact {{ gap: 4px; }}
           label {{ display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }}
           input, textarea {{
             width: 100%;
@@ -320,55 +322,61 @@ def _render_beforest_admin_page(
             color: var(--ink);
             font: inherit;
           }}
-          input:focus, textarea:focus {{ outline: none; border-color: #b8b8b1; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
+          input:focus, textarea:focus {{ outline: none; border-color: #c8c5be; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
           textarea {{ min-height: 84px; resize: vertical; }}
           .search-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }}
           .legend {{
             display: flex;
-            gap: 14px;
+            gap: 10px;
             flex-wrap: wrap;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
             line-height: 1.45;
-            padding: 2px 2px 6px;
+            padding: 0 2px 4px;
           }}
           .legend strong {{ color: var(--ink); font-weight: 600; }}
           .table-head,
           .conversation-row {{
             display: grid;
             grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 1.5fr) 140px 220px;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
           }}
           .table-head {{
-            padding: 0 12px;
+            padding: 0 10px 6px;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
           }}
-          .conversation-list {{ display: grid; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }}
+          .conversation-list {{
+            display: grid;
+            border: 1px solid var(--line);
+            border-radius: 10px;
+            overflow: hidden;
+            background: #fff;
+          }}
           .conversation-row {{
-            padding: 12px;
+            padding: 10px;
             border-top: 1px solid var(--line);
             background: #fff;
           }}
           .conversation-row:first-child {{ border-top: 0; }}
-          .conversation-row:hover {{ background: #fafaf9; }}
-          .conversation-row.selected {{ background: #f7f7f5; }}
+          .conversation-row:hover {{ background: var(--soft-2); }}
+          .conversation-row.selected {{ background: var(--soft-2); }}
           .row-main {{ min-width: 0; grid-area: main; }}
-          .row-name {{ font-size: 14px; font-weight: 600; }}
+          .row-name {{ font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }}
           .row-meta,
           .row-time {{
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
           }}
           .row-time {{ grid-area: time; }}
           .dot {{ color: #c1c1bc; }}
           .row-preview {{
-            font-size: 13px;
-            line-height: 1.5;
+            font-size: 12px;
+            line-height: 1.45;
             color: #2b2b28;
             min-width: 0;
             grid-area: preview;
@@ -377,20 +385,20 @@ def _render_beforest_admin_page(
           .toggle {{
             border: 1px solid var(--line);
             border-radius: 999px;
-            padding: 6px 10px;
-            background: #fff;
+            padding: 5px 9px;
+            background: transparent;
             color: var(--muted);
-            font-size: 12px;
+            font-size: 11px;
             font-weight: 600;
             transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
           }}
           .toggle.active {{
             color: var(--ink);
-            border-color: #d2d2ce;
+            border-color: #d0cdc6;
           }}
           .toggle.active[data-status="bot"] {{
-            background: #f1f1ef;
-            border-color: #d2d2ce;
+            background: var(--soft);
+            border-color: #d0cdc6;
           }}
           .toggle.active[data-status="human"] {{
             background: #fef3f2;
@@ -406,14 +414,14 @@ def _render_beforest_admin_page(
             width: 100%;
             border: 0;
             border-radius: 10px;
-            padding: 10px 12px;
+            padding: 9px 12px;
             background: var(--accent);
             color: #fff;
             font: inherit;
             font-weight: 600;
             cursor: pointer;
           }}
-          button.secondary {{ background: #3b3b38; }}
+          button.secondary {{ background: #2b2b28; }}
           .toggle {{
             width: auto;
             min-width: 0;
@@ -481,16 +489,16 @@ def _render_beforest_admin_page(
               border-radius: 10px;
             }}
             h1 {{ font-size: 22px; }}
-            h2 {{ font-size: 15px; }}
+            h2 {{ font-size: 14px; }}
             .search-row {{ grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }}
             .search-row button {{
               width: auto;
-              padding: 10px;
+              padding: 9px 10px;
               min-width: 72px;
             }}
             .legend {{
-              gap: 6px;
-              font-size: 11px;
+                gap: 6px;
+                font-size: 11px;
               padding-bottom: 2px;
             }}
             .conversation-row {{
