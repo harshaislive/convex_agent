@@ -155,29 +155,10 @@ def _render_beforest_admin_page(
     message: str = "",
     error: str = "",
 ) -> str:
-    safe_contact_id = _escape_html(contact_id)
     safe_search_query = _escape_html(search_query)
     safe_message = _escape_html(message)
     safe_error = _escape_html(error)
-    status_markup = ""
-    if status_payload:
-        handover_status = _escape_html(str(status_payload.get("handover_status", "bot")))
-        updated_by = _escape_html(str(status_payload.get("updated_by", "") or "system"))
-        note = _escape_html(str(status_payload.get("note", "") or ""))
-        updated_at = _escape_html(_format_beforest_ops_timestamp(status_payload.get("updated_at")))
-        status_markup = f"""
-        <section class="panel">
-          <div class="stack compact">
-            <div class="label">Current Status</div>
-            <div class="status-row">
-              <span class="badge neutral">{handover_status}</span>
-              <span class="meta">Updated by {updated_by} at {updated_at}</span>
-            </div>
-            <div class="note">{note}</div>
-          </div>
-        </section>
-        """
-    conversation_cards = ""
+    conversation_rows = ""
     for item in recent_conversations or []:
         item_contact_id = str(item.get("contactId", "") or "").strip()
         if not item_contact_id:
@@ -192,37 +173,35 @@ def _render_beforest_admin_page(
         status_class = handover_status if handover_status in {"human", "paused"} else "bot"
         preview = str(item.get("message", "") or "").strip() or str(item.get("agentReplyText", "") or "").strip()
         preview = _truncate_beforest_ops_text(preview or "No message preview yet.")
-        note = _truncate_beforest_ops_text(item.get("note", ""), limit=90)
         timestamp_label = _format_beforest_ops_timestamp(item.get("receivedAt"))
         selected_class = " selected" if item_contact_id == contact_id else ""
-        query_suffix = f"&q={urllib.parse.quote_plus(search_query)}" if search_query else ""
         display_name_html = _escape_html(display_name)
         username_html = _escape_html(f"@{username}" if username else "")
         preview_html = _escape_html(preview)
-        note_html = _escape_html(note)
         contact_id_html = _escape_html(item_contact_id)
         timestamp_html = _escape_html(timestamp_label)
-        conversation_cards += f"""
-        <article class="conversation{selected_class}">
-          <div class="conversation-head">
-            <div>
-              <a class="name-link" href="/admin/beforest?contact_id={urllib.parse.quote_plus(item_contact_id)}{query_suffix}">{display_name_html}</a>
-              <div class="conversation-meta">{username_html} <span class="dot">•</span> {contact_id_html}</div>
-            </div>
-            <span class="badge {status_class}">{_escape_html(handover_status)}</span>
+        conversation_rows += f"""
+        <form method="post" action="/admin/beforest/handover" class="conversation-row{selected_class}">
+          <input type="hidden" name="contact_id" value="{contact_id_html}" />
+          <input type="hidden" name="updated_by" value="ops" />
+          <input type="hidden" name="note" value="" />
+          <input type="hidden" name="q" value="{safe_search_query}" />
+          <div class="row-main">
+            <div class="row-name">{display_name_html}</div>
+            <div class="row-meta">{username_html} <span class="dot">•</span> {contact_id_html}</div>
           </div>
-          <div class="conversation-preview">{preview_html}</div>
-          <div class="conversation-foot">
-            <span>{timestamp_html}</span>
-            <span>{note_html}</span>
+          <div class="row-preview">{preview_html}</div>
+          <div class="row-time">{timestamp_html}</div>
+          <div class="row-toggles">
+            <button class="toggle {'active' if status_class == 'bot' else ''}" type="submit" name="status" value="bot">Bot</button>
+            <button class="toggle {'active' if status_class == 'human' else ''}" type="submit" name="status" value="human">Human</button>
+            <button class="toggle {'active' if status_class == 'paused' else ''}" type="submit" name="status" value="paused">Pause</button>
           </div>
-        </article>
+        </form>
         """
-    if authenticated and not conversation_cards:
-        conversation_cards = """
-        <article class="conversation empty">
-          <div class="conversation-preview">No conversations matched this search yet.</div>
-        </article>
+    if authenticated and not conversation_rows:
+        conversation_rows = """
+        <div class="empty-state">No conversations matched this search.</div>
         """
     login_markup = """
     <form method="post" action="/admin/beforest/login" class="stack">
@@ -233,56 +212,25 @@ def _render_beforest_admin_page(
     </form>
     """
     controls_markup = f"""
-    <div class="layout">
-      <section class="panel stack">
-        <div class="stack compact">
-          <div>
-            <h2>Inbox</h2>
-            <p>Search by name, username, contact ID, or message.</p>
-          </div>
+    <section class="panel stack">
+      <div class="stack compact">
+        <div>
+          <h2>Inbox</h2>
+          <p>Search contacts and switch bot ownership inline.</p>
         </div>
-        <form method="get" action="/admin/beforest" class="search-row">
-          <input type="text" name="q" value="{safe_search_query}" placeholder="Search conversations" />
-          <button class="secondary" type="submit">Search</button>
-        </form>
-        <div class="conversation-list">{conversation_cards}</div>
-      </section>
-      <section class="stack">
-        <section class="panel stack">
-          <div>
-            <h2>Conversation</h2>
-            <p>Pick a thread from the inbox to manage handover.</p>
-          </div>
-          <form method="get" action="/admin/beforest" class="stack compact">
-            <input type="hidden" name="q" value="{safe_search_query}" />
-            <label>Contact ID
-              <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
-            </label>
-            <button class="ghost" type="submit">Open Thread</button>
-          </form>
-          {status_markup}
-        </section>
-        <section class="panel stack">
-          <form method="post" action="/admin/beforest/handover" class="stack">
-            <input type="hidden" name="q" value="{safe_search_query}" />
-            <label>Contact ID
-              <input type="text" name="contact_id" value="{safe_contact_id}" placeholder="e.g. 12345" />
-            </label>
-            <label>Operator
-              <input type="text" name="updated_by" placeholder="founder" />
-            </label>
-            <label>Note
-              <textarea name="note" placeholder="Optional internal note"></textarea>
-            </label>
-            <div class="actions two">
-              <button type="submit" name="status" value="human">Take Over</button>
-              <button class="secondary" type="submit" name="status" value="bot">Resume Bot</button>
-            </div>
-            <button class="ghost small" type="submit" name="status" value="paused">Pause Bot</button>
-          </form>
-        </section>
-      </section>
-    </div>
+      </div>
+      <form method="get" action="/admin/beforest" class="search-row">
+        <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" />
+        <button class="secondary" type="submit">Search</button>
+      </form>
+      <div class="table-head">
+        <span>Contact</span>
+        <span>Last message</span>
+        <span>Updated</span>
+        <span>Status</span>
+      </div>
+      <div class="conversation-list">{conversation_rows}</div>
+    </section>
     """
 
     body = f"""
@@ -325,7 +273,6 @@ def _render_beforest_admin_page(
           h1 {{ margin: 0 0 4px; font-size: 28px; font-weight: 650; }}
           h2 {{ margin: 0 0 4px; font-size: 16px; font-weight: 650; }}
           p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 14px; }}
-          .layout {{ display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.85fr); gap: 16px; align-items: start; }}
           .stack {{ display: grid; gap: 12px; }}
           .stack.compact {{ gap: 8px; }}
           label {{ display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }}
@@ -341,61 +288,60 @@ def _render_beforest_admin_page(
           input:focus, textarea:focus {{ outline: none; border-color: #b8b8b1; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
           textarea {{ min-height: 84px; resize: vertical; }}
           .search-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }}
-          .actions {{ display: grid; gap: 8px; }}
-          .actions.two {{ grid-template-columns: 1fr 1fr; }}
-          .conversation-list {{ display: grid; gap: 12px; }}
-          .conversation {{
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            padding: 12px 14px;
-            background: #fff;
+          .table-head,
+          .conversation-row {{
             display: grid;
-            gap: 8px;
+            grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 1.5fr) 140px 220px;
+            gap: 12px;
+            align-items: center;
           }}
-          .conversation:hover {{ background: #fafaf9; }}
-          .conversation.selected {{ border-color: #d1d1cb; background: #fafaf9; }}
-          .conversation.empty {{ background: #fafaf9; }}
-          .conversation-head {{
-            display: flex;
-            justify-content: space-between;
-            gap: 10px;
-            align-items: start;
-          }}
-          .name-link {{
-            color: var(--ink);
-            font-size: 14px;
-            font-weight: 600;
-            text-decoration: none;
-          }}
-          .name-link:hover {{ text-decoration: underline; }}
-          .conversation-meta,
-          .conversation-foot {{
+          .table-head {{
+            padding: 0 12px;
             color: var(--muted);
             font-size: 12px;
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-          }}
-          .dot {{ color: #c1c1bc; }}
-          .conversation-preview {{
-            font-size: 13px;
-            line-height: 1.5;
-            color: #2b2b28;
-          }}
-          .badge {{
-            border-radius: 999px;
-            padding: 4px 8px;
-            font-size: 11px;
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
-            color: #4d4d49;
-            background: var(--soft);
           }}
-          .badge.human {{ color: #7a271a; background: #fef3f2; }}
-          .badge.paused {{ color: #8a5b14; background: #fffaeb; }}
-          .badge.bot, .badge.neutral {{ color: #3f3f3a; background: var(--soft); }}
-          .status-row {{ display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }}
+          .conversation-list {{ display: grid; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }}
+          .conversation-row {{
+            padding: 12px;
+            border-top: 1px solid var(--line);
+            background: #fff;
+          }}
+          .conversation-row:first-child {{ border-top: 0; }}
+          .conversation-row:hover {{ background: #fafaf9; }}
+          .conversation-row.selected {{ background: #f7f7f5; }}
+          .row-main {{ min-width: 0; }}
+          .row-name {{ font-size: 14px; font-weight: 600; }}
+          .row-meta,
+          .row-time {{
+            color: var(--muted);
+            font-size: 12px;
+          }}
+          .dot {{ color: #c1c1bc; }}
+          .row-preview {{
+            font-size: 13px;
+            line-height: 1.5;
+            color: #2b2b28;
+            min-width: 0;
+          }}
+          .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; }}
+          .toggle {{
+            width: auto;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 6px 10px;
+            background: #fff;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+          }}
+          .toggle.active {{
+            background: var(--soft);
+            color: var(--ink);
+            border-color: #d2d2ce;
+          }}
           button {{
             width: 100%;
             border: 0;
@@ -408,12 +354,6 @@ def _render_beforest_admin_page(
             cursor: pointer;
           }}
           button.secondary {{ background: #3b3b38; }}
-          button.ghost {{
-            background: #fff;
-            color: var(--ink);
-            border: 1px solid var(--line);
-          }}
-          button.small {{ width: auto; justify-self: start; }}
           .banner, .error {{
             border-radius: 10px;
             padding: 10px 12px;
@@ -422,14 +362,19 @@ def _render_beforest_admin_page(
           }}
           .banner {{ background: #f4f4f2; color: #3b3b38; }}
           .error {{ background: #fef3f2; color: var(--danger); }}
-          .label {{ font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }}
           .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
           form.inline {{ margin: 0; }}
+          .empty-state {{ padding: 18px; color: var(--muted); font-size: 13px; background: #fff; }}
           @media (max-width: 900px) {{
-            .layout {{ grid-template-columns: 1fr; }}
+            .table-head {{ display: none; }}
+            .conversation-row {{
+              grid-template-columns: 1fr;
+              align-items: start;
+            }}
+            .row-toggles {{ justify-content: flex-start; }}
           }}
           @media (max-width: 640px) {{
-            .actions.two, .search-row {{ grid-template-columns: 1fr; }}
+            .search-row {{ grid-template-columns: 1fr; }}
           }}
         </style>
       </head>
