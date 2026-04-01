@@ -80,22 +80,8 @@ BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
 SERVICE_DIR = Path(__file__).resolve().parent
 SERVICE_TEMPLATES_DIR = SERVICE_DIR / "templates"
 SERVICE_STATIC_DIR = SERVICE_DIR / "static"
-
-
-def _resolve_repo_root(current_file: Path) -> Path:
-    resolved = current_file.resolve()
-    candidates = [resolved.parents[2], resolved.parents[1]]
-    for candidate in candidates:
-        if (candidate / "media").exists():
-            return candidate
-    return candidates[0]
-
-
-REPO_ROOT = _resolve_repo_root(Path(__file__))
-MEDIA_DIR = REPO_ROOT / "media"
-BEFOREST_FAVICON_ICO_PATH = MEDIA_DIR / "favicon.ico"
-BEFOREST_FAVICON_PNG_PATH = MEDIA_DIR / "beforest-favicon.png"
-BEFOREST_OG_IMAGE_PATH = MEDIA_DIR / "beforest-og.jpg"
+BEFOREST_FAVICON_ICO_PATH = SERVICE_STATIC_DIR / "favicon.ico"
+BEFOREST_OG_IMAGE_PATH = SERVICE_STATIC_DIR / "beforest-og.jpg"
 BEFOREST_ADMIN_STYLESHEET_PATH = "/static/beforest_admin.css"
 BEFOREST_ADMIN_SCRIPT_PATH = "/static/beforest_admin.js"
 BEFOREST_ADMIN_STYLESHEET_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.css"

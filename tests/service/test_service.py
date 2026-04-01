@@ -699,20 +699,6 @@ def test_beforest_ops_cookie_auth_roundtrip() -> None:
         assert svc._beforest_ops_authenticated(request) is True
 
 
-def test_resolve_repo_root_falls_back_to_container_layout(tmp_path) -> None:
-    import service.service as svc
-
-    app_root = tmp_path / "app"
-    service_dir = app_root / "service"
-    media_dir = app_root / "media"
-    service_dir.mkdir(parents=True)
-    media_dir.mkdir()
-    current_file = service_dir / "service.py"
-    current_file.write_text("# stub", encoding="utf-8")
-
-    assert svc._resolve_repo_root(current_file) == app_root
-
-
 def test_external_base_url_prefers_forwarded_headers() -> None:
     import service.service as svc
 
@@ -922,11 +908,12 @@ def test_beforest_brand_asset_paths_exist() -> None:
     import service.service as svc
 
     assert svc.BEFOREST_FAVICON_ICO_PATH.exists()
-    assert svc.BEFOREST_FAVICON_PNG_PATH.exists()
     assert svc.BEFOREST_OG_IMAGE_PATH.exists()
     assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_admin.html").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.css").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.js").exists()
+    assert svc.SERVICE_STATIC_DIR.joinpath("favicon.ico").exists()
+    assert svc.SERVICE_STATIC_DIR.joinpath("beforest-og.jpg").exists()
     assert svc.BEFOREST_ADMIN_STYLESHEET_FILE_PATH.exists()
     assert svc.BEFOREST_ADMIN_SCRIPT_FILE_PATH.exists()
 
