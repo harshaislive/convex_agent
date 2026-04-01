@@ -231,20 +231,22 @@ def _render_beforest_admin_page(
     """
     controls_markup = f"""
     <section class="panel stack">
-      <div class="stack compact">
-        <div>
+      <div class="toolbar">
+        <div class="toolbar-title">
           <h2>Beforest Inbox</h2>
-          <p>Search conversations and switch ownership inline.</p>
         </div>
-      </div>
-      <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
-        <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" autocomplete="off" />
-        <button class="secondary" type="submit">Search</button>
-      </form>
-      <div class="legend">
-        <span><strong>Bot</strong> auto-replies.</span>
-        <span><strong>Human</strong> keeps the bot silent.</span>
-        <span><strong>Pause</strong> mutes the bot temporarily.</span>
+        <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
+          <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" autocomplete="off" />
+          <button class="secondary" type="submit">Search</button>
+        </form>
+        <details class="help-chip">
+          <summary>Status Help</summary>
+          <div class="help-menu">
+            <div><strong>Bot</strong> auto-replies.</div>
+            <div><strong>Human</strong> keeps the bot silent.</div>
+            <div><strong>Pause</strong> mutes the bot temporarily.</div>
+          </div>
+        </details>
       </div>
       <div class="table-head">
         <span>Contact</span>
@@ -312,6 +314,15 @@ def _render_beforest_admin_page(
           p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 13px; }}
           .stack {{ display: grid; gap: 10px; }}
           .stack.compact {{ gap: 4px; }}
+          .toolbar {{
+            display: grid;
+            grid-template-columns: auto minmax(320px, 1fr) auto;
+            gap: 10px;
+            align-items: center;
+          }}
+          .toolbar-title {{
+            min-width: 0;
+          }}
           label {{ display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }}
           input, textarea {{
             width: 100%;
@@ -324,17 +335,45 @@ def _render_beforest_admin_page(
           }}
           input:focus, textarea:focus {{ outline: none; border-color: #c8c5be; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
           textarea {{ min-height: 84px; resize: vertical; }}
-          .search-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }}
-          .legend {{
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            color: var(--muted);
-            font-size: 11px;
-            line-height: 1.45;
-            padding: 0 2px 4px;
+          .search-row {{
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 8px;
+            width: 100%;
           }}
-          .legend strong {{ color: var(--ink); font-weight: 600; }}
+          .help-chip {{
+            position: relative;
+            justify-self: end;
+          }}
+          .help-chip summary {{
+            list-style: none;
+            cursor: pointer;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--muted);
+            background: #fff;
+            user-select: none;
+          }}
+          .help-chip summary::-webkit-details-marker {{ display: none; }}
+          .help-menu {{
+            position: absolute;
+            top: calc(100% + 8px);
+            right: 0;
+            width: 230px;
+            border: 1px solid var(--line-strong);
+            border-radius: 10px;
+            background: #fff;
+            padding: 10px;
+            display: grid;
+            gap: 8px;
+            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+            font-size: 12px;
+            color: var(--muted);
+            z-index: 5;
+          }}
+          .help-menu strong {{ color: var(--ink); }}
           .table-head,
           .conversation-row {{
             display: grid;
@@ -349,13 +388,18 @@ def _render_beforest_admin_page(
             font-weight: 600;
             text-transform: uppercase;
             letter-spacing: 0.04em;
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: var(--panel);
           }}
           .conversation-list {{
             display: grid;
             border: 1px solid var(--line);
             border-radius: 10px;
-            overflow: hidden;
+            overflow: auto;
             background: #fff;
+            max-height: calc(100vh - 210px);
           }}
           .conversation-row {{
             padding: 10px;
@@ -380,6 +424,9 @@ def _render_beforest_admin_page(
             color: #2b2b28;
             min-width: 0;
             grid-area: preview;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
           }}
           .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; grid-area: toggles; }}
           .toggle {{
@@ -457,6 +504,13 @@ def _render_beforest_admin_page(
             transform: translateY(0);
           }}
           @media (max-width: 900px) {{
+            .toolbar {{
+              grid-template-columns: 1fr;
+              align-items: stretch;
+            }}
+            .help-chip {{
+              justify-self: start;
+            }}
             .table-head {{ display: none; }}
             .conversation-row {{
               grid-template-columns: minmax(0, 1fr) auto;
@@ -468,6 +522,7 @@ def _render_beforest_admin_page(
               align-items: start;
             }}
             .row-preview {{
+              white-space: normal;
               display: -webkit-box;
               -webkit-line-clamp: 2;
               -webkit-box-orient: vertical;
@@ -495,11 +550,6 @@ def _render_beforest_admin_page(
               width: auto;
               padding: 9px 10px;
               min-width: 72px;
-            }}
-            .legend {{
-                gap: 6px;
-                font-size: 11px;
-              padding-bottom: 2px;
             }}
             .conversation-row {{
               padding: 10px;
