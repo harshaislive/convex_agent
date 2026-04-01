@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Beforest Ops</title>
+    <link rel="icon" href="{{ favicon_url }}" sizes="any" />
+    <link rel="apple-touch-icon" href="{{ favicon_url }}" />
+    <link rel="stylesheet" href="{{ stylesheet_url }}" />
+    <meta property="og:title" content="Beforest Ops" />
+    <meta property="og:description" content="Beforest DM inbox and handover controls." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="{{ page_url }}" />
+    <meta property="og:image" content="{{ og_image_url }}" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Beforest Ops" />
+    <meta name="twitter:description" content="Beforest DM inbox and handover controls." />
+    <meta name="twitter:image" content="{{ og_image_url }}" />
+  </head>
+  <body>
+    <div class="shell">
+      <div class="panel stack">
+        <div class="topbar">
+          <div>
+            <h1>Beforest Ops</h1>
+            <p>Minimal admin page for Instagram DM handover control.</p>
+          </div>
+          {% if authenticated %}
+            <form class="inline" method="post" action="/admin/beforest/logout">
+              <button class="secondary" type="submit">Logout</button>
+            </form>
+          {% endif %}
+        </div>
+
+        {% if message %}
+          <div class="banner">{{ message }}</div>
+        {% endif %}
+        {% if error %}
+          <div class="error">{{ error }}</div>
+        {% endif %}
+
+        {% if authenticated %}
+          <section class="panel stack">
+            <div class="toolbar">
+              <div class="toolbar-title">
+                <h2>Beforest Inbox</h2>
+              </div>
+              <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
+                <input
+                  type="text"
+                  name="q"
+                  value="{{ search_query }}"
+                  placeholder="Search name, username, contact ID, or message"
+                  autocomplete="off"
+                />
+                <button class="secondary" type="submit">Search</button>
+              </form>
+              <details class="help-chip">
+                <summary>Status Help</summary>
+                <div class="help-menu">
+                  <div><strong>Bot</strong> auto-replies.</div>
+                  <div><strong>Human</strong> keeps the bot silent.</div>
+                  <div><strong>Pause</strong> mutes the bot temporarily.</div>
+                </div>
+              </details>
+            </div>
+
+            <div class="table-head">
+              <span>Contact</span>
+              <span>Last message</span>
+              <span>Updated</span>
+              <span>Status</span>
+            </div>
+
+            <div id="conversation-list" class="conversation-list">
+              {% if recent_conversations %}
+                {% for item in recent_conversations %}
+                  <form method="post" action="/admin/beforest/handover" class="conversation-row{% if item.selected %} selected{% endif %}">
+                    <input type="hidden" name="contact_id" value="{{ item.contact_id }}" />
+                    <input type="hidden" name="updated_by" value="ops" />
+                    <input type="hidden" name="note" value="" />
+                    <input type="hidden" name="q" value="{{ item.search_query }}" />
+                    <div class="row-main">
+                      <div class="row-name">{{ item.display_name }}</div>
+                      <div class="row-meta">
+                        {{ item.username }}{% if item.username %} <span class="dot">•</span> {% endif %}{{ item.contact_id }}
+                      </div>
+                    </div>
+                    <div class="row-preview">{{ item.preview }}</div>
+                    <div class="row-time">{{ item.timestamp_label }}</div>
+                    <div class="row-toggles">
+                      <button
+                        class="toggle{% if item.status == 'bot' %} active{% endif %}"
+                        data-status="bot"
+                        type="submit"
+                        name="status"
+                        value="bot"
+                      >
+                        Bot
+                      </button>
+                      <button
+                        class="toggle{% if item.status == 'human' %} active{% endif %}"
+                        data-status="human"
+                        type="submit"
+                        name="status"
+                        value="human"
+                      >
+                        Human
+                      </button>
+                      <button
+                        class="toggle{% if item.status == 'paused' %} active{% endif %}"
+                        data-status="paused"
+                        type="submit"
+                        name="status"
+                        value="paused"
+                      >
+                        Pause
+                      </button>
+                    </div>
+                  </form>
+                {% endfor %}
+              {% else %}
+                <div class="empty-state">No conversations matched this search.</div>
+              {% endif %}
+            </div>
+
+            <div id="ops-toast" class="toast" aria-live="polite"></div>
+          </section>
+        {% else %}
+          <form method="post" action="/admin/beforest/login" class="stack">
+            <label>Password
+              <input type="password" name="password" placeholder="Enter admin password" />
+            </label>
+            <button type="submit">Unlock Ops</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <script src="{{ script_url }}" defer></script>
+  </body>
+</html>

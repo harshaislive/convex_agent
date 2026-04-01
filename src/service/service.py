@@ -34,6 +34,8 @@ from fastapi.responses import (
 )
 from fastapi.routing import APIRoute
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from langchain_core._api import LangChainBetaWarning
 from langchain_core.messages import (
     AIMessage,
@@ -77,10 +79,16 @@ warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+SERVICE_DIR = Path(__file__).resolve().parent
+SERVICE_TEMPLATES_DIR = SERVICE_DIR / "templates"
+SERVICE_STATIC_DIR = SERVICE_DIR / "static"
 MEDIA_DIR = REPO_ROOT / "media"
 BEFOREST_FAVICON_ICO_PATH = MEDIA_DIR / "favicon.ico"
 BEFOREST_FAVICON_PNG_PATH = MEDIA_DIR / "beforest-favicon.png"
 BEFOREST_OG_IMAGE_PATH = MEDIA_DIR / "beforest-og.jpg"
+BEFOREST_ADMIN_STYLESHEET_PATH = "/static/beforest_admin.css"
+BEFOREST_ADMIN_SCRIPT_PATH = "/static/beforest_admin.js"
+templates = Jinja2Templates(directory=str(SERVICE_TEMPLATES_DIR))
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -115,16 +123,6 @@ def _beforest_ops_authenticated(request: Request) -> bool:
     return bool(actual_cookie) and secrets.compare_digest(actual_cookie, expected_cookie)
 
 
-def _escape_html(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#x27;")
-    )
-
-
 def _format_beforest_ops_timestamp(value: Any) -> str:
     if not isinstance(value, (int, float)):
         return "Unknown"
@@ -157,26 +155,13 @@ def _beforest_admin_status_payload_from_recent_conversations(
     return None
 
 
-def _render_beforest_admin_page(
+def _build_beforest_admin_rows(
     *,
-    authenticated: bool,
     contact_id: str = "",
     search_query: str = "",
-    status_payload: dict[str, Any] | None = None,
     recent_conversations: list[dict[str, Any]] | None = None,
-    message: str = "",
-    error: str = "",
-    page_url: str = "",
-    favicon_url: str = "/favicon.ico",
-    og_image_url: str = "/og/beforest-og.jpg",
-) -> str:
-    safe_search_query = _escape_html(search_query)
-    safe_message = _escape_html(message)
-    safe_error = _escape_html(error)
-    safe_page_url = _escape_html(page_url)
-    safe_favicon_url = _escape_html(favicon_url)
-    safe_og_image_url = _escape_html(og_image_url)
-    conversation_rows = ""
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     for item in recent_conversations or []:
         item_contact_id = str(item.get("contactId", "") or "").strip()
         if not item_contact_id:
@@ -192,508 +177,19 @@ def _render_beforest_admin_page(
         preview = str(item.get("message", "") or "").strip() or str(item.get("agentReplyText", "") or "").strip()
         preview = _truncate_beforest_ops_text(preview or "No message preview yet.")
         timestamp_label = _format_beforest_ops_timestamp(item.get("receivedAt"))
-        selected_class = " selected" if item_contact_id == contact_id else ""
-        display_name_html = _escape_html(display_name)
-        username_html = _escape_html(f"@{username}" if username else "")
-        preview_html = _escape_html(preview)
-        contact_id_html = _escape_html(item_contact_id)
-        timestamp_html = _escape_html(timestamp_label)
-        conversation_rows += f"""
-        <form method="post" action="/admin/beforest/handover" class="conversation-row{selected_class}">
-          <input type="hidden" name="contact_id" value="{contact_id_html}" />
-          <input type="hidden" name="updated_by" value="ops" />
-          <input type="hidden" name="note" value="" />
-          <input type="hidden" name="q" value="{safe_search_query}" />
-          <div class="row-main">
-            <div class="row-name">{display_name_html}</div>
-            <div class="row-meta">{username_html} <span class="dot">•</span> {contact_id_html}</div>
-          </div>
-          <div class="row-preview">{preview_html}</div>
-          <div class="row-time">{timestamp_html}</div>
-          <div class="row-toggles">
-            <button class="toggle {'active' if status_class == 'bot' else ''}" data-status="bot" type="submit" name="status" value="bot">Bot</button>
-            <button class="toggle {'active' if status_class == 'human' else ''}" data-status="human" type="submit" name="status" value="human">Human</button>
-            <button class="toggle {'active' if status_class == 'paused' else ''}" data-status="paused" type="submit" name="status" value="paused">Pause</button>
-          </div>
-        </form>
-        """
-    if authenticated and not conversation_rows:
-        conversation_rows = """
-        <div class="empty-state">No conversations matched this search.</div>
-        """
-    login_markup = """
-    <form method="post" action="/admin/beforest/login" class="stack">
-      <label>Password
-        <input type="password" name="password" placeholder="Enter admin password" />
-      </label>
-      <button type="submit">Unlock Ops</button>
-    </form>
-    """
-    controls_markup = f"""
-    <section class="panel stack">
-      <div class="toolbar">
-        <div class="toolbar-title">
-          <h2>Beforest Inbox</h2>
-        </div>
-        <form method="get" action="/admin/beforest" class="search-row" data-live-search="true">
-          <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" autocomplete="off" />
-          <button class="secondary" type="submit">Search</button>
-        </form>
-        <details class="help-chip">
-          <summary>Status Help</summary>
-          <div class="help-menu">
-            <div><strong>Bot</strong> auto-replies.</div>
-            <div><strong>Human</strong> keeps the bot silent.</div>
-            <div><strong>Pause</strong> mutes the bot temporarily.</div>
-          </div>
-        </details>
-      </div>
-      <div class="table-head">
-        <span>Contact</span>
-        <span>Last message</span>
-        <span>Updated</span>
-        <span>Status</span>
-      </div>
-      <div id="conversation-list" class="conversation-list">{conversation_rows}</div>
-      <div id="ops-toast" class="toast" aria-live="polite"></div>
-    </section>
-    """
-
-    body = f"""
-    <!doctype html>
-    <html lang="en">
-      <head>
-        <meta charset="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>Beforest Ops</title>
-        <link rel="icon" href="{safe_favicon_url}" sizes="any" />
-        <link rel="apple-touch-icon" href="{safe_favicon_url}" />
-        <meta property="og:title" content="Beforest Ops" />
-        <meta property="og:description" content="Beforest DM inbox and handover controls." />
-        <meta property="og:type" content="website" />
-        <meta property="og:url" content="{safe_page_url}" />
-        <meta property="og:image" content="{safe_og_image_url}" />
-        <meta name="twitter:card" content="summary_large_image" />
-        <meta name="twitter:title" content="Beforest Ops" />
-        <meta name="twitter:description" content="Beforest DM inbox and handover controls." />
-        <meta name="twitter:image" content="{safe_og_image_url}" />
-        <style>
-          :root {{
-            --bg: #f7f7f3;
-            --panel: #ffffff;
-            --ink: #171717;
-            --muted: #6b6f76;
-            --line: #e7e5e4;
-            --line-strong: #dbd8d3;
-            --accent: #171717;
-            --soft: #f3f3f1;
-            --soft-2: #fafaf9;
-            --danger: #b42318;
-          }}
-          * {{ box-sizing: border-box; }}
-          body {{
-            margin: 0;
-            font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
-            color: var(--ink);
-          }}
-          .shell {{
-            max-width: 1180px;
-            margin: 22px auto;
-            padding: 0 16px;
-          }}
-          .panel {{
-            background: var(--panel);
-            border: 1px solid var(--line-strong);
-            border-radius: 12px;
-            padding: 14px;
-            box-shadow: none;
-          }}
-          h1 {{ margin: 0 0 4px; font-size: 26px; font-weight: 650; }}
-          h2 {{ margin: 0 0 2px; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }}
-          p, .meta, .note {{ color: var(--muted); line-height: 1.45; font-size: 13px; }}
-          .stack {{ display: grid; gap: 10px; }}
-          .stack.compact {{ gap: 4px; }}
-          .toolbar {{
-            display: grid;
-            grid-template-columns: auto minmax(320px, 1fr) auto;
-            gap: 10px;
-            align-items: center;
-          }}
-          .toolbar-title {{
-            min-width: 0;
-          }}
-          label {{ display: grid; gap: 6px; font-weight: 500; font-size: 13px; color: var(--muted); }}
-          input, textarea {{
-            width: 100%;
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            padding: 10px 12px;
-            background: #fff;
-            color: var(--ink);
-            font: inherit;
-          }}
-          input:focus, textarea:focus {{ outline: none; border-color: #c8c5be; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
-          textarea {{ min-height: 84px; resize: vertical; }}
-          .search-row {{
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
-            gap: 8px;
-            width: 100%;
-          }}
-          .help-chip {{
-            position: relative;
-            justify-self: end;
-          }}
-          .help-chip summary {{
-            list-style: none;
-            cursor: pointer;
-            border: 1px solid var(--line);
-            border-radius: 999px;
-            padding: 6px 10px;
-            font-size: 11px;
-            color: var(--muted);
-            background: #fff;
-            user-select: none;
-          }}
-          .help-chip summary::-webkit-details-marker {{ display: none; }}
-          .help-menu {{
-            position: absolute;
-            top: calc(100% + 8px);
-            right: 0;
-            width: 230px;
-            border: 1px solid var(--line-strong);
-            border-radius: 10px;
-            background: #fff;
-            padding: 10px;
-            display: grid;
-            gap: 8px;
-            box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-            font-size: 12px;
-            color: var(--muted);
-            z-index: 5;
-          }}
-          .help-menu strong {{ color: var(--ink); }}
-          .table-head,
-          .conversation-row {{
-            display: grid;
-            grid-template-columns: minmax(220px, 1.1fr) minmax(260px, 1.5fr) 140px 220px;
-            gap: 10px;
-            align-items: center;
-          }}
-          .table-head {{
-            padding: 0 10px 6px;
-            color: var(--muted);
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.04em;
-            position: sticky;
-            top: 0;
-            z-index: 2;
-            background: var(--panel);
-          }}
-          .conversation-list {{
-            display: grid;
-            border: 1px solid var(--line);
-            border-radius: 10px;
-            overflow: auto;
-            background: #fff;
-            max-height: calc(100vh - 210px);
-          }}
-          .conversation-row {{
-            padding: 10px;
-            border-top: 1px solid var(--line);
-            background: #fff;
-          }}
-          .conversation-row:first-child {{ border-top: 0; }}
-          .conversation-row:hover {{ background: var(--soft-2); }}
-          .conversation-row.selected {{ background: var(--soft-2); }}
-          .row-main {{ min-width: 0; grid-area: main; }}
-          .row-name {{ font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }}
-          .row-meta,
-          .row-time {{
-            color: var(--muted);
-            font-size: 11px;
-          }}
-          .row-time {{ grid-area: time; }}
-          .dot {{ color: #c1c1bc; }}
-          .row-preview {{
-            font-size: 12px;
-            line-height: 1.45;
-            color: #2b2b28;
-            min-width: 0;
-            grid-area: preview;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
-          }}
-          .row-toggles {{ display: flex; gap: 6px; justify-content: flex-end; grid-area: toggles; }}
-          .toggle {{
-            border: 1px solid var(--line);
-            border-radius: 999px;
-            padding: 5px 9px;
-            background: transparent;
-            color: var(--muted);
-            font-size: 11px;
-            font-weight: 600;
-            transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
-          }}
-          .toggle.active {{
-            color: var(--ink);
-            border-color: #d0cdc6;
-          }}
-          .toggle.active[data-status="bot"] {{
-            background: var(--soft);
-            border-color: #d0cdc6;
-          }}
-          .toggle.active[data-status="human"] {{
-            background: #fef3f2;
-            border-color: #f0c5c0;
-            color: #9f1f18;
-          }}
-          .toggle.active[data-status="paused"] {{
-            background: #fffaeb;
-            border-color: #efd9a7;
-            color: #9a6700;
-          }}
-          button {{
-            width: 100%;
-            border: 0;
-            border-radius: 10px;
-            padding: 9px 12px;
-            background: var(--accent);
-            color: #fff;
-            font: inherit;
-            font-weight: 600;
-            cursor: pointer;
-          }}
-          button.secondary {{ background: #2b2b28; }}
-          .toggle {{
-            width: auto;
-            min-width: 0;
-            flex: 0 0 auto;
-          }}
-          .banner, .error {{
-            border-radius: 10px;
-            padding: 10px 12px;
-            margin-bottom: 14px;
-            font-size: 13px;
-          }}
-          .banner {{ background: #f4f4f2; color: #3b3b38; }}
-          .error {{ background: #fef3f2; color: var(--danger); }}
-          .topbar {{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }}
-          form.inline {{ margin: 0; }}
-          .empty-state {{ padding: 18px; color: var(--muted); font-size: 13px; background: #fff; }}
-          .toast {{
-            position: fixed;
-            right: 18px;
-            bottom: 18px;
-            background: #191919;
-            color: #fff;
-            border-radius: 10px;
-            padding: 10px 12px;
-            font-size: 13px;
-            opacity: 0;
-            transform: translateY(6px);
-            pointer-events: none;
-            transition: opacity 120ms ease, transform 120ms ease;
-          }}
-          .toast.show {{
-            opacity: 1;
-            transform: translateY(0);
-          }}
-          @media (max-width: 900px) {{
-            .toolbar {{
-              grid-template-columns: 1fr;
-              align-items: stretch;
-            }}
-            .help-chip {{
-              justify-self: start;
-            }}
-            .table-head {{ display: none; }}
-            .conversation-row {{
-              grid-template-columns: minmax(0, 1fr) auto;
-              grid-template-areas:
-                "main toggles"
-                "preview preview"
-                "time time";
-              gap: 8px 10px;
-              align-items: start;
-            }}
-            .row-preview {{
-              white-space: normal;
-              display: -webkit-box;
-              -webkit-line-clamp: 2;
-              -webkit-box-orient: vertical;
-              overflow: hidden;
-            }}
-            .row-toggles {{ justify-content: flex-end; }}
-            .toggle {{
-              padding: 5px 9px;
-              font-size: 11px;
-            }}
-          }}
-          @media (max-width: 640px) {{
-            .shell {{
-              margin: 12px auto;
-              padding: 0 10px;
-            }}
-            .panel {{
-              padding: 12px;
-              border-radius: 10px;
-            }}
-            h1 {{ font-size: 22px; }}
-            h2 {{ font-size: 14px; }}
-            .search-row {{ grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }}
-            .search-row button {{
-              width: auto;
-              padding: 9px 10px;
-              min-width: 72px;
-            }}
-            .conversation-row {{
-              padding: 10px;
-              gap: 6px 8px;
-            }}
-            .row-name {{ font-size: 13px; }}
-            .row-meta, .row-time, .row-preview {{ font-size: 11px; }}
-            .row-toggles {{ gap: 4px; }}
-            .toggle {{
-              padding: 4px 8px;
-              font-size: 10px;
-            }}
-            .toast {{
-              left: 10px;
-              right: 10px;
-              bottom: 10px;
-              font-size: 12px;
-            }}
-          }}
-        </style>
-        <script>
-          document.addEventListener("DOMContentLoaded", function () {{
-            const form = document.querySelector("form[data-live-search='true']");
-            const toast = document.getElementById("ops-toast");
-            let toastTimer = null;
-            function showToast(message, isError) {{
-              if (!toast) return;
-              toast.textContent = message;
-              toast.style.background = isError ? "#b42318" : "#191919";
-              toast.classList.add("show");
-              window.clearTimeout(toastTimer);
-              toastTimer = window.setTimeout(function () {{
-                toast.classList.remove("show");
-              }}, 1800);
-            }}
-
-            async function bindRowForms(scope) {{
-              scope.querySelectorAll("form.conversation-row").forEach(function (rowForm) {{
-                if (rowForm.dataset.bound === "true") return;
-                rowForm.dataset.bound = "true";
-                rowForm.addEventListener("submit", async function (event) {{
-                  event.preventDefault();
-                  const submitter = event.submitter;
-                  if (!submitter) return;
-                  const formData = new FormData(rowForm);
-                  formData.set("status", submitter.value);
-                  try {{
-                    const response = await fetch(rowForm.action, {{
-                      method: "POST",
-                      body: formData,
-                      headers: {{
-                        "x-requested-with": "fetch"
-                      }}
-                    }});
-                    const payload = await response.json();
-                    if (!response.ok || !payload.ok) {{
-                      showToast(payload.error || "Could not update handover status.", true);
-                      return;
-                    }}
-                    rowForm.querySelectorAll(".toggle").forEach(function (button) {{
-                      button.classList.toggle("active", button.value === payload.handover_status);
-                    }});
-                    showToast("Status updated", false);
-                  }} catch (_error) {{
-                    showToast("Could not update handover status.", true);
-                  }}
-                }});
-              }});
-            }}
-
-            async function refreshConversationList(query) {{
-              const target = document.getElementById("conversation-list");
-              if (!target) return;
-              const url = new URL(window.location.href);
-              url.searchParams.set("q", query);
-              url.searchParams.delete("contact_id");
-              url.searchParams.delete("message");
-              url.searchParams.delete("error");
-              try {{
-                const response = await fetch(url.toString(), {{
-                  headers: {{
-                    "x-requested-with": "fetch"
-                  }}
-                }});
-                if (!response.ok) {{
-                  showToast("Could not refresh inbox.", true);
-                  return;
-                }}
-                const html = await response.text();
-                const doc = new DOMParser().parseFromString(html, "text/html");
-                const nextList = doc.getElementById("conversation-list");
-                if (!nextList) {{
-                  showToast("Could not refresh inbox.", true);
-                  return;
-                }}
-                target.innerHTML = nextList.innerHTML;
-                window.history.replaceState({{}}, "", url.toString());
-                bindRowForms(target);
-              }} catch (_error) {{
-                showToast("Could not refresh inbox.", true);
-              }}
-            }}
-
-            if (form) {{
-              const input = form.querySelector("input[name='q']");
-              let timer = null;
-              form.addEventListener("submit", async function (event) {{
-                event.preventDefault();
-                const currentInput = form.querySelector("input[name='q']");
-                await refreshConversationList(currentInput ? currentInput.value : "");
-              }});
-              if (input) {{
-                input.addEventListener("input", function () {{
-                  window.clearTimeout(timer);
-                  timer = window.setTimeout(function () {{
-                    refreshConversationList(input.value);
-                  }}, 220);
-                }});
-              }}
-            }}
-
-            bindRowForms(document);
-          }});
-        </script>
-      </head>
-      <body>
-        <div class="shell">
-          <div class="panel stack">
-            <div class="topbar">
-              <div>
-                <h1>Beforest Ops</h1>
-                <p>Minimal admin page for Instagram DM handover control.</p>
-              </div>
-              {"<form class='inline' method='post' action='/admin/beforest/logout'><button class='secondary' type='submit'>Logout</button></form>" if authenticated else ""}
-            </div>
-            {f"<div class='banner'>{safe_message}</div>" if safe_message else ""}
-            {f"<div class='error'>{safe_error}</div>" if safe_error else ""}
-            {controls_markup if authenticated else login_markup}
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-    return body
+        rows.append(
+            {
+                "contact_id": item_contact_id,
+                "display_name": display_name,
+                "username": f"@{username}" if username else "",
+                "status": status_class,
+                "preview": preview,
+                "timestamp_label": timestamp_label,
+                "selected": item_contact_id == contact_id,
+                "search_query": search_query,
+            }
+        )
+    return rows
 
 
 def verify_bearer(
@@ -747,6 +243,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_unique_id)
+app.mount("/static", StaticFiles(directory=str(SERVICE_STATIC_DIR)), name="static")
 router = APIRouter(dependencies=[Depends(verify_bearer)])
 
 
@@ -1914,18 +1411,23 @@ async def beforest_admin_page(
     page_url = str(request.url)
     favicon_url = f"{base_url}/favicon.ico"
     og_image_url = f"{base_url}/og/beforest-og.jpg"
+    template_context = {
+        "request": request,
+        "authenticated": False,
+        "contact_id": contact_id,
+        "search_query": q,
+        "message": message,
+        "error": error,
+        "page_url": page_url,
+        "favicon_url": favicon_url,
+        "og_image_url": og_image_url,
+        "stylesheet_url": BEFOREST_ADMIN_STYLESHEET_PATH,
+        "script_url": BEFOREST_ADMIN_SCRIPT_PATH,
+        "recent_conversations": [],
+        "status_payload": None,
+    }
     if not _beforest_ops_authenticated(request):
-        return HTMLResponse(
-            _render_beforest_admin_page(
-                authenticated=False,
-                contact_id=contact_id,
-                search_query=q,
-                error=error,
-                page_url=page_url,
-                favicon_url=favicon_url,
-                og_image_url=og_image_url,
-            )
-        )
+        return templates.TemplateResponse(request, "beforest_admin.html", template_context)
 
     status_payload: dict[str, Any] | None = None
     recent_conversations: list[dict[str, Any]] = []
@@ -1953,20 +1455,20 @@ async def beforest_admin_page(
                 "updated_by": automation_state.updated_by if automation_state is not None else "",
                 "note": automation_state.note if automation_state is not None else "",
             }
-    return HTMLResponse(
-        _render_beforest_admin_page(
-            authenticated=True,
-            contact_id=contact_id,
-            search_query=q,
-            status_payload=status_payload,
-            recent_conversations=recent_conversations,
-            message=message,
-            error=error,
-            page_url=page_url,
-            favicon_url=favicon_url,
-            og_image_url=og_image_url,
-        )
+    template_context.update(
+        {
+            "authenticated": True,
+            "recent_conversations": _build_beforest_admin_rows(
+                contact_id=contact_id,
+                search_query=q,
+                recent_conversations=recent_conversations,
+            ),
+            "status_payload": status_payload,
+            "message": message,
+            "error": error,
+        }
     )
+    return templates.TemplateResponse(request, "beforest_admin.html", template_context)
 
 
 @app.post("/admin/beforest/login")

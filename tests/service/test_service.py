@@ -707,6 +707,8 @@ async def test_beforest_admin_page_renders_login_form() -> None:
     assert "Enter admin password" in body
     assert 'property="og:image"' in body
     assert 'rel="icon"' in body
+    assert '/static/beforest_admin.css' in body
+    assert '/static/beforest_admin.js' in body
 
 
 @pytest.mark.asyncio
@@ -856,6 +858,9 @@ def test_beforest_brand_asset_paths_exist() -> None:
     assert svc.BEFOREST_FAVICON_ICO_PATH.exists()
     assert svc.BEFOREST_FAVICON_PNG_PATH.exists()
     assert svc.BEFOREST_OG_IMAGE_PATH.exists()
+    assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_admin.html").exists()
+    assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.css").exists()
+    assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.js").exists()
 
 
 def test_beforest_operating_context_message_includes_collective_rules() -> None:
