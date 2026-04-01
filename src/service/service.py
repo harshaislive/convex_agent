@@ -1013,14 +1013,23 @@ def _tracking_value(value: Any) -> str:
     return normalized[:80]
 
 
-def _enrich_typeform_url(
+def _enrich_trackable_url(
     url: str,
     *,
     subscriber_id: str | None = None,
     subscriber_data: dict[str, Any] | None = None,
 ) -> str:
     lower_url = url.lower()
-    if "form.typeform.com" not in lower_url:
+    is_typeform = "form.typeform.com" in lower_url
+    is_beforest_link = any(
+        host in lower_url
+        for host in (
+            "beforest.co",
+            "bewild.life",
+            "10percent.beforest.co",
+        )
+    )
+    if not is_typeform and not is_beforest_link:
         return url
 
     subscriber_data = subscriber_data or {}
@@ -1048,17 +1057,20 @@ def _enrich_typeform_url(
     query = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
     query["utm_source"] = "instagram"
     query["utm_medium"] = "dm_bot"
-    query["utm_campaign"] = query.get("utm_campaign") or "beforest_collective_interest"
+    query["utm_campaign"] = query.get("utm_campaign") or (
+        "beforest_collective_interest" if is_typeform else "beforest_dm_link"
+    )
     if utm_content:
         query["utm_content"] = utm_content
 
     fragment = dict(urllib.parse.parse_qsl(parsed.fragment, keep_blank_values=True))
-    if username:
-        fragment["ig_username"] = username
-    if contact_tracking_id:
-        fragment["manychat_contact_id"] = contact_tracking_id
-    if ig_user_id:
-        fragment["ig_user_id"] = ig_user_id
+    if is_typeform:
+        if username:
+            fragment["ig_username"] = username
+        if contact_tracking_id:
+            fragment["manychat_contact_id"] = contact_tracking_id
+        if ig_user_id:
+            fragment["ig_user_id"] = ig_user_id
 
     return urllib.parse.urlunsplit(
         (
@@ -1154,7 +1166,7 @@ def _build_manychat_messages(
         {
             "type": "url",
             "caption": _button_caption_for_url(url),
-            "url": _enrich_typeform_url(
+            "url": _enrich_trackable_url(
                 url,
                 subscriber_id=subscriber_id,
                 subscriber_data=subscriber_data,

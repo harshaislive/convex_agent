@@ -386,7 +386,9 @@ def test_build_manychat_content_includes_buttons_for_urls() -> None:
     from service.service import _build_manychat_content
 
     content = _build_manychat_content(
-        "Visit https://experiences.beforest.co/retreat and https://bewild.life/shop"
+        "Visit https://experiences.beforest.co/retreat and https://bewild.life/shop",
+        subscriber_id="771052958",
+        subscriber_data={"username": "harsha.live", "instagram_user_id": "ig-7710"},
     )
 
     assert content["type"] == "instagram"
@@ -395,6 +397,11 @@ def test_build_manychat_content_includes_buttons_for_urls() -> None:
     assert len(content["messages"][0]["buttons"]) == 2
     assert content["messages"][0]["buttons"][0]["caption"] == "Explore Experiences"
     assert content["messages"][0]["buttons"][1]["caption"] == "Explore Products"
+    assert "utm_source=instagram" in content["messages"][0]["buttons"][0]["url"]
+    assert "utm_medium=dm_bot" in content["messages"][0]["buttons"][0]["url"]
+    assert "utm_campaign=beforest_dm_link" in content["messages"][0]["buttons"][0]["url"]
+    assert "utm_content=harsha.live" in content["messages"][0]["buttons"][0]["url"]
+    assert "#" not in content["messages"][0]["buttons"][0]["url"]
 
 
 def test_build_manychat_content_uses_show_interest_caption_for_typeform() -> None:
