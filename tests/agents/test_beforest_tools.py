@@ -146,3 +146,21 @@ def test_search_beforest_experiences_returns_fallback_when_no_upcoming_dates(moc
     assert len(results) == 1
     assert results[0]["source"] == "Live experiences status"
     assert results[0]["url"] == "https://experiences.beforest.co/"
+
+
+@patch("agents.beforest_tools._load_live_search_pages")
+def test_search_beforest_experiences_treats_next_query_as_fresh_date_request(mock_pages):
+    mock_pages.return_value = [
+        {
+            "host": "experiences.beforest.co",
+            "title": "Past event",
+            "text": "Starry Nights happened on March 1, 2026.",
+            "url": "https://experiences.beforest.co/starry-nights",
+        }
+    ]
+
+    results = search_beforest_experiences.invoke({"query": "What is the next experience?"})
+
+    assert len(results) == 1
+    assert results[0]["source"] == "Live experiences status"
+    assert results[0]["url"] == "https://experiences.beforest.co/"

@@ -562,6 +562,19 @@ def test_enforce_current_experiences_freshness_rewrites_stale_month_year_date() 
     assert "January 2026" not in result
 
 
+def test_enforce_current_experiences_freshness_rewrites_stale_next_experience_date() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "What is the next experience?"
+    stale_next_reply = "The next experience is Starry Nights on March 1, 2026."
+
+    result = _enforce_current_experiences_freshness(message, stale_next_reply)
+
+    assert "can't confirm live experience dates" in result
+    assert "https://experiences.beforest.co" in result
+    assert "March 1, 2026" not in result
+
+
 def test_derive_beforest_session_state_auto_closes_stale_confirmation() -> None:
     from service.service import _derive_beforest_session_state
 

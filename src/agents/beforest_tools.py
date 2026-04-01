@@ -136,6 +136,8 @@ _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "current",
     "currently",
     "live",
+    "next",
+    "next one",
     "right now",
     "now",
     "today",
