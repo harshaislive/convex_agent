@@ -193,9 +193,9 @@ def _render_beforest_admin_page(
           <div class="row-preview">{preview_html}</div>
           <div class="row-time">{timestamp_html}</div>
           <div class="row-toggles">
-            <button class="toggle {'active' if status_class == 'bot' else ''}" type="submit" name="status" value="bot">Bot</button>
-            <button class="toggle {'active' if status_class == 'human' else ''}" type="submit" name="status" value="human">Human</button>
-            <button class="toggle {'active' if status_class == 'paused' else ''}" type="submit" name="status" value="paused">Pause</button>
+            <button class="toggle {'active' if status_class == 'bot' else ''}" data-status="bot" type="submit" name="status" value="bot">Bot</button>
+            <button class="toggle {'active' if status_class == 'human' else ''}" data-status="human" type="submit" name="status" value="human">Human</button>
+            <button class="toggle {'active' if status_class == 'paused' else ''}" data-status="paused" type="submit" name="status" value="paused">Pause</button>
           </div>
         </form>
         """
@@ -223,6 +223,11 @@ def _render_beforest_admin_page(
         <input type="text" name="q" value="{safe_search_query}" placeholder="Search name, username, contact ID, or message" autocomplete="off" />
         <button class="secondary" type="submit">Search</button>
       </form>
+      <div class="legend">
+        <span><strong>Bot</strong>: replies automatically.</span>
+        <span><strong>Human</strong>: teammate/founder owns the conversation, bot stays silent.</span>
+        <span><strong>Pause</strong>: bot is muted temporarily without marking active human takeover.</span>
+      </div>
       <div class="table-head">
         <span>Contact</span>
         <span>Last message</span>
@@ -289,6 +294,16 @@ def _render_beforest_admin_page(
           input:focus, textarea:focus {{ outline: none; border-color: #b8b8b1; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }}
           textarea {{ min-height: 84px; resize: vertical; }}
           .search-row {{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }}
+          .legend {{
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+            padding: 2px 2px 6px;
+          }}
+          .legend strong {{ color: var(--ink); font-weight: 600; }}
           .table-head,
           .conversation-row {{
             display: grid;
@@ -337,11 +352,25 @@ def _render_beforest_admin_page(
             color: var(--muted);
             font-size: 12px;
             font-weight: 600;
+            transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
           }}
           .toggle.active {{
-            background: var(--soft);
             color: var(--ink);
             border-color: #d2d2ce;
+          }}
+          .toggle.active[data-status="bot"] {{
+            background: #f1f1ef;
+            border-color: #d2d2ce;
+          }}
+          .toggle.active[data-status="human"] {{
+            background: #fef3f2;
+            border-color: #f0c5c0;
+            color: #9f1f18;
+          }}
+          .toggle.active[data-status="paused"] {{
+            background: #fffaeb;
+            border-color: #efd9a7;
+            color: #9a6700;
           }}
           button {{
             width: 100%;
@@ -394,6 +423,7 @@ def _render_beforest_admin_page(
           }}
           @media (max-width: 640px) {{
             .search-row {{ grid-template-columns: 1fr; }}
+            .legend {{ gap: 8px; }}
           }}
         </style>
         <script>
