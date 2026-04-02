@@ -1355,10 +1355,56 @@ def _remove_urls_from_text(text: str) -> str:
     return cleaned or text
 
 
+def _normalize_beforest_dm_voice(reply_text: str) -> str:
+    normalized = re.sub(
+        r"\btheir collective page\b",
+        "our collective page",
+        reply_text,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\btheir contact page\b",
+        "our contact page",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\btheir website\b",
+        "our website",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\btheir page\b",
+        "our page",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"\brequest an invite\b",
+        "show interest",
+        normalized,
+        flags=re.IGNORECASE,
+    )
+    return normalized
+
+
 def _button_caption_for_url(url: str) -> str:
     lower_url = url.lower()
     if "form.typeform.com" in lower_url:
         return "Show Interest"
+    if "/co-forest/" in lower_url:
+        return "Explore Hammiyala"
+    if "/the-bhopal-collective/" in lower_url:
+        return "Explore Bhopal"
+    if "/poomaale-2-0-collective/" in lower_url:
+        return "Explore Poomaale 2.0"
+    if "/the-poomaale-estate/" in lower_url:
+        return "Explore Poomaale"
+    if "/the-mumbai-collective/" in lower_url:
+        return "Explore Mumbai"
+    if "/hyderabad-collective/" in lower_url:
+        return "Explore Hyderabad"
     if "experiences.beforest.co" in lower_url:
         return "Explore Experiences"
     if "hospitality.beforest.co" in lower_url:
@@ -1596,7 +1642,9 @@ async def _generate_beforest_reply_text(
         raise HTTPException(status_code=500, detail="Unexpected response type")
 
     reply_text = _clamp_beforest_dm_reply(
-        _enforce_current_experiences_freshness(request.message, output.content)
+        _normalize_beforest_dm_voice(
+            _enforce_current_experiences_freshness(request.message, output.content)
+        )
     )
     next_session = _next_beforest_session_state(
         previous_session=prior_session,

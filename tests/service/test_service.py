@@ -412,6 +412,14 @@ def test_build_manychat_content_uses_show_interest_caption_for_typeform() -> Non
     assert content["messages"][0]["buttons"][0]["caption"] == "Show Interest"
 
 
+def test_build_manychat_content_uses_collective_specific_caption() -> None:
+    from service.service import _build_manychat_content
+
+    content = _build_manychat_content("See https://beforest.co/co-forest/")
+
+    assert content["messages"][0]["buttons"][0]["caption"] == "Explore Hammiyala"
+
+
 def test_build_manychat_content_enriches_typeform_tracking() -> None:
     from service.service import _build_manychat_content
 
@@ -502,6 +510,20 @@ def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
 
     assert "regenerative lifestyle company" in result
     assert "hello@beforest.co" in result or "beforest.co/contact" in result
+
+
+def test_normalize_beforest_dm_voice_rewrites_third_person_and_invite_language() -> None:
+    from service.service import _normalize_beforest_dm_voice
+
+    result = _normalize_beforest_dm_voice(
+        "To join the Hammiyala Collective, request an invite directly on their page: "
+        "https://beforest.co/co-forest/. For questions, email hello@beforest.co."
+    )
+
+    assert "request an invite" not in result.lower()
+    assert "their page" not in result.lower()
+    assert "show interest" in result
+    assert "our page" in result
     assert "extra detail" not in result
     assert len(result) <= 220
 
