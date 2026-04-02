@@ -3,27 +3,33 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Beforest Ops</title>
+    <title>{{ page_title }}</title>
     <link rel="icon" href="{{ favicon_url }}" sizes="any" />
     <link rel="apple-touch-icon" href="{{ favicon_url }}" />
     <link rel="stylesheet" href="{{ stylesheet_url }}" />
-    <meta property="og:title" content="Beforest Ops" />
-    <meta property="og:description" content="Beforest DM inbox and handover controls." />
+    <meta property="og:title" content="{{ page_title }}" />
+    <meta property="og:description" content="{{ page_description }}" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="{{ page_url }}" />
     <meta property="og:image" content="{{ og_image_url }}" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Beforest Ops" />
-    <meta name="twitter:description" content="Beforest DM inbox and handover controls." />
+    <meta name="twitter:title" content="{{ page_title }}" />
+    <meta name="twitter:description" content="{{ page_description }}" />
     <meta name="twitter:image" content="{{ og_image_url }}" />
   </head>
   <body>
     <div class="shell">
       <div class="panel stack">
         <div class="topbar">
-          <div>
+          <div class="topbar-main">
             <h1>Beforest Ops</h1>
             <p>Minimal admin page for Instagram DM handover control.</p>
+            {% if authenticated %}
+              <nav class="ops-nav" aria-label="Beforest ops navigation">
+                <a href="/admin/beforest" class="{% if active_nav == 'inbox' %}active{% endif %}">Inbox</a>
+                <a href="/admin/beforest/analytics" class="{% if active_nav == 'analytics' %}active{% endif %}">Analytics</a>
+              </nav>
+            {% endif %}
           </div>
           {% if authenticated %}
             <form class="inline" method="post" action="/admin/beforest/logout">

@@ -4,8 +4,10 @@ import json
 import logging
 import re
 import secrets
+import statistics
 import urllib.parse
 import warnings
+from collections import Counter
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
@@ -87,6 +89,7 @@ BEFOREST_ADMIN_SCRIPT_PATH = "/static/beforest_admin.js"
 BEFOREST_ADMIN_STYLESHEET_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.css"
 BEFOREST_ADMIN_SCRIPT_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.js"
 templates = Jinja2Templates(directory=str(SERVICE_TEMPLATES_DIR))
+BEFOREST_ANALYTICS_SAMPLE_LIMIT = 100
 
 
 def custom_generate_unique_id(route: APIRoute) -> str:
@@ -140,6 +143,44 @@ def _truncate_beforest_ops_text(value: Any, *, limit: int = 140) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _beforest_ops_stat_value(value: Any) -> str:
+    text = str(value or "").strip()
+    return text or "--"
+
+
+def _beforest_ops_base_template_context(
+    request: Request,
+    *,
+    page_title: str,
+    page_description: str,
+    authenticated: bool,
+    message: str = "",
+    error: str = "",
+    active_nav: str = "inbox",
+) -> dict[str, Any]:
+    base_url = _external_base_url(request)
+    query_string = request.url.query
+    page_url = f"{base_url}{request.url.path}"
+    if query_string:
+        page_url += f"?{query_string}"
+    favicon_url = f"{base_url}/favicon.ico"
+    og_image_url = f"{base_url}/og/beforest-og.jpg"
+    return {
+        "request": request,
+        "page_title": page_title,
+        "page_description": page_description,
+        "authenticated": authenticated,
+        "message": message,
+        "error": error,
+        "page_url": page_url,
+        "favicon_url": favicon_url,
+        "og_image_url": og_image_url,
+        "stylesheet_url": BEFOREST_ADMIN_STYLESHEET_PATH,
+        "script_url": BEFOREST_ADMIN_SCRIPT_PATH,
+        "active_nav": active_nav,
+    }
 
 
 def _beforest_admin_status_payload_from_recent_conversations(
@@ -196,6 +237,245 @@ def _build_beforest_admin_rows(
             }
         )
     return rows
+
+
+def _beforest_ops_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _beforest_ops_percentage(count: int, total: int) -> str:
+    if total <= 0:
+        return "0%"
+    return f"{round((count / total) * 100):.0f}%"
+
+
+def _beforest_ops_route_target(reply_text: str) -> str:
+    lower_text = reply_text.lower()
+    if "form.typeform.com" in lower_text:
+        return "typeform"
+    if "experiences.beforest.co" in lower_text:
+        return "experiences"
+    if "hospitality.beforest.co" in lower_text:
+        return "hospitality"
+    if "bewild.life" in lower_text:
+        return "bewild"
+    if "10percent.beforest.co" in lower_text:
+        return "10percent"
+    if "beforest.co/call-mail" in lower_text or "hello@beforest.co" in lower_text:
+        return "contact"
+    if any(
+        slug in lower_text
+        for slug in (
+            "/the-bhopal-collective/",
+            "/co-forest/",
+            "/poomaale-2-0-collective/",
+            "/the-mumbai-collective/",
+        )
+    ):
+        return "collective"
+    if "beforest.co/" in lower_text:
+        return "beforest"
+    return "none"
+
+
+def _beforest_ops_session_type(item: dict[str, Any]) -> str:
+    raw_payload = item.get("rawPayload", {})
+    if isinstance(raw_payload, dict):
+        session_payload = raw_payload.get("session", {})
+        if isinstance(session_payload, dict):
+            session_type = str(session_payload.get("session_type", "") or "").strip().lower()
+            if session_type:
+                return session_type
+    message_text = str(item.get("message", "") or "").strip()
+    if not message_text:
+        return "general"
+    return _infer_beforest_session_type(message_text)
+
+
+def _build_beforest_analytics_payload(
+    recent_conversations: list[dict[str, Any]],
+    *,
+    sample_limit: int,
+    knowledge_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    items = [item for item in recent_conversations if isinstance(item, dict)]
+    total = len(items)
+    unique_contacts = len(
+        {
+            str(item.get("contactId", "") or "").strip()
+            for item in items
+            if str(item.get("contactId", "") or "").strip()
+        }
+    )
+    status_counts: Counter[str] = Counter()
+    intent_counts: Counter[str] = Counter()
+    route_counts: Counter[str] = Counter()
+    reply_char_lengths: list[int] = []
+    reply_latencies_ms: list[float] = []
+    freshness_guard_count = 0
+    replied_count = 0
+    sample_rows: list[dict[str, Any]] = []
+
+    for item in items:
+        handover_status = str(item.get("handoverStatus", "bot") or "bot").strip().lower()
+        if handover_status not in {"human", "paused"}:
+            handover_status = "bot"
+        status_counts[handover_status] += 1
+
+        message_text = str(item.get("message", "") or "").strip()
+        reply_text = str(item.get("agentReplyText", "") or "").strip()
+        session_type = _beforest_ops_session_type(item)
+        route_target = _beforest_ops_route_target(reply_text)
+        intent_counts[session_type] += 1
+        route_counts[route_target] += 1
+
+        if reply_text:
+            replied_count += 1
+            reply_char_lengths.append(len(reply_text))
+        if "i can't confirm live experience dates here right now." in reply_text.lower():
+            freshness_guard_count += 1
+
+        received_at = _beforest_ops_float(item.get("receivedAt"))
+        replied_at = _beforest_ops_float(item.get("agentReplyAt"))
+        if received_at is not None and replied_at is not None and replied_at >= received_at:
+            reply_latencies_ms.append((replied_at - received_at) * 1000)
+
+        display_name = (
+            str(item.get("name", "") or "").strip()
+            or str(item.get("instagramAccountName", "") or "").strip()
+            or "Unknown contact"
+        )
+        sample_rows.append(
+            {
+                "timestamp_label": _format_beforest_ops_timestamp(item.get("receivedAt")),
+                "display_name": display_name,
+                "contact_id": str(item.get("contactId", "") or "").strip(),
+                "intent": session_type,
+                "route_target": route_target,
+                "status": handover_status,
+                "message_preview": _truncate_beforest_ops_text(message_text or "No inbound message.", limit=96),
+                "reply_preview": _truncate_beforest_ops_text(reply_text or "No bot reply saved.", limit=96),
+            }
+        )
+
+    median_reply_chars = int(statistics.median(reply_char_lengths)) if reply_char_lengths else 0
+    median_reply_ms = int(statistics.median(reply_latencies_ms)) if reply_latencies_ms else 0
+    p95_reply_ms = (
+        int(sorted(reply_latencies_ms)[max(0, int(len(reply_latencies_ms) * 0.95) - 1)])
+        if reply_latencies_ms
+        else 0
+    )
+    suppressed_count = max(total - replied_count, 0)
+    top_intents = intent_counts.most_common(6)
+    top_routes = route_counts.most_common(6)
+    knowledge_status = knowledge_status or {}
+    outline_ok = bool(
+        knowledge_status.get("outlineConfigured") and not str(knowledge_status.get("outlineError", "")).strip()
+    )
+
+    return {
+        "sample_limit": sample_limit,
+        "sample_count": total,
+        "cards": [
+            {
+                "label": "Conversations",
+                "value": _beforest_ops_stat_value(total),
+                "meta": f"latest {sample_limit} from Convex",
+            },
+            {
+                "label": "Unique Contacts",
+                "value": _beforest_ops_stat_value(unique_contacts),
+                "meta": "distinct contact IDs in sample",
+            },
+            {
+                "label": "Bot Reply Rate",
+                "value": _beforest_ops_percentage(replied_count, total),
+                "meta": f"{replied_count} replied / {suppressed_count} silent",
+            },
+            {
+                "label": "Human + Pause",
+                "value": _beforest_ops_stat_value(status_counts.get("human", 0) + status_counts.get("paused", 0)),
+                "meta": "latest ownership state in sample",
+            },
+            {
+                "label": "Median Reply",
+                "value": f"{median_reply_chars} chars" if median_reply_chars else "--",
+                "meta": "saved bot reply length",
+            },
+            {
+                "label": "Median Speed",
+                "value": f"{median_reply_ms} ms" if median_reply_ms else "--",
+                "meta": f"p95 {p95_reply_ms} ms" if p95_reply_ms else "reply timings unavailable",
+            },
+            {
+                "label": "Freshness Guard",
+                "value": _beforest_ops_stat_value(freshness_guard_count),
+                "meta": "current-experience rewrites in sample",
+            },
+            {
+                "label": "Knowledge Health",
+                "value": "outline: ok" if outline_ok else "outline: check",
+                "meta": f"{knowledge_status.get('outlineResultCount', 0)} top results",
+            },
+        ],
+        "status_breakdown": [
+            {
+                "label": status,
+                "count": count,
+                "share": _beforest_ops_percentage(count, total),
+            }
+            for status, count in (("bot", status_counts.get("bot", 0)), ("human", status_counts.get("human", 0)), ("paused", status_counts.get("paused", 0)))
+        ],
+        "intent_breakdown": [
+            {
+                "label": label,
+                "count": count,
+                "share_value": round((count / total) * 100, 1) if total else 0.0,
+                "share_label": _beforest_ops_percentage(count, total),
+            }
+            for label, count in top_intents
+        ],
+        "route_breakdown": [
+            {
+                "label": label,
+                "count": count,
+                "share_value": round((count / total) * 100, 1) if total else 0.0,
+                "share_label": _beforest_ops_percentage(count, total),
+            }
+            for label, count in top_routes
+        ],
+        "knowledge_rows": [
+            {
+                "label": "Outline",
+                "value": "configured" if knowledge_status.get("outlineConfigured") else "missing",
+            },
+            {
+                "label": "Outline Docs",
+                "value": _beforest_ops_stat_value(knowledge_status.get("outlineDocCount", 0)),
+            },
+            {
+                "label": "Outline Chunks",
+                "value": _beforest_ops_stat_value(knowledge_status.get("outlineChunkCount", 0)),
+            },
+            {
+                "label": "Top Results",
+                "value": _beforest_ops_stat_value(knowledge_status.get("outlineResultCount", 0)),
+            },
+            {
+                "label": "Convex",
+                "value": "configured" if knowledge_status.get("convexConfigured") else "missing",
+            },
+            {
+                "label": "Outline Error",
+                "value": _beforest_ops_stat_value(knowledge_status.get("outlineError", "")),
+            },
+        ],
+        "sample_rows": sample_rows[:12],
+        "empty": total == 0,
+    }
 
 
 def verify_bearer(
@@ -1434,28 +1714,23 @@ async def beforest_admin_page(
     message: str = "",
     error: str = "",
 ) -> HTMLResponse:
-    base_url = _external_base_url(request)
-    query_string = request.url.query
-    page_url = f"{base_url}{request.url.path}"
-    if query_string:
-        page_url += f"?{query_string}"
-    favicon_url = f"{base_url}/favicon.ico"
-    og_image_url = f"{base_url}/og/beforest-og.jpg"
-    template_context = {
-        "request": request,
-        "authenticated": False,
+    template_context = _beforest_ops_base_template_context(
+        request,
+        page_title="Beforest Ops",
+        page_description="Minimal admin page for Instagram DM handover control.",
+        authenticated=False,
+        message=message,
+        error=error,
+        active_nav="inbox",
+    )
+    template_context.update(
+        {
         "contact_id": contact_id,
         "search_query": q,
-        "message": message,
-        "error": error,
-        "page_url": page_url,
-        "favicon_url": favicon_url,
-        "og_image_url": og_image_url,
-        "stylesheet_url": BEFOREST_ADMIN_STYLESHEET_PATH,
-        "script_url": BEFOREST_ADMIN_SCRIPT_PATH,
         "recent_conversations": [],
         "status_payload": None,
-    }
+        }
+    )
     if not _beforest_ops_authenticated(request):
         return templates.TemplateResponse(request, "beforest_admin.html", template_context)
 
@@ -1499,6 +1774,70 @@ async def beforest_admin_page(
         }
     )
     return templates.TemplateResponse(request, "beforest_admin.html", template_context)
+
+
+@app.get("/admin/beforest/analytics", response_class=HTMLResponse)
+async def beforest_analytics_page(
+    request: Request,
+    limit: int = BEFOREST_ANALYTICS_SAMPLE_LIMIT,
+    error: str = "",
+) -> HTMLResponse:
+    resolved_limit = max(20, min(limit, 250))
+    template_context = _beforest_ops_base_template_context(
+        request,
+        page_title="Beforest Analytics",
+        page_description="Minimal analytics dashboard for Beforest Instagram DM performance.",
+        authenticated=False,
+        error=error,
+        active_nav="analytics",
+    )
+    template_context.update(
+        {
+            "analytics": _build_beforest_analytics_payload([], sample_limit=resolved_limit),
+            "limit": resolved_limit,
+        }
+    )
+    if not _beforest_ops_authenticated(request):
+        return templates.TemplateResponse(request, "beforest_analytics.html", template_context)
+
+    recent_conversations: list[dict[str, Any]] = []
+    knowledge_status: dict[str, Any] = {}
+    try:
+        recent_conversations = await _load_beforest_recent_conversations_from_convex(limit=resolved_limit)
+    except Exception as exc:
+        logger.warning("Failed loading Beforest analytics conversations: %s", exc)
+        error = error or "Analytics data could not be loaded from Convex."
+    try:
+        knowledge_status = get_knowledge_source_status()
+    except Exception as exc:
+        logger.warning("Failed loading Beforest knowledge health for analytics: %s", exc)
+        knowledge_status = {
+            "outlineConfigured": bool(settings.OUTLINE_API_URL and settings.OUTLINE_API_TOKEN),
+            "outlineError": f"Knowledge health check failed: {exc}",
+            "convexConfigured": bool(_convex_base_url() and settings.AGENT_SHARED_SECRET),
+        }
+
+    template_context.update(
+        _beforest_ops_base_template_context(
+            request,
+            page_title="Beforest Analytics",
+            page_description="Minimal analytics dashboard for Beforest Instagram DM performance.",
+            authenticated=True,
+            error=error,
+            active_nav="analytics",
+        )
+    )
+    template_context.update(
+        {
+            "analytics": _build_beforest_analytics_payload(
+                recent_conversations,
+                sample_limit=resolved_limit,
+                knowledge_status=knowledge_status,
+            ),
+            "limit": resolved_limit,
+        }
+    )
+    return templates.TemplateResponse(request, "beforest_analytics.html", template_context)
 
 
 @app.post("/admin/beforest/login")

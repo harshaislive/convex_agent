@@ -803,6 +803,100 @@ async def test_beforest_admin_page_renders_recent_conversations(
 
 
 @pytest.mark.asyncio
+async def test_beforest_analytics_page_renders_login_form() -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/admin/beforest/analytics",
+                "query_string": b"",
+                "headers": [],
+            }
+        )
+        response = await svc.beforest_analytics_page(request)
+
+    body = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert "Beforest Analytics" in body
+    assert "Unlock Analytics" in body
+
+
+@pytest.mark.asyncio
+@patch("service.service.get_knowledge_source_status")
+@patch("service.service._load_beforest_recent_conversations_from_convex", new_callable=AsyncMock)
+async def test_beforest_analytics_page_renders_metrics(
+    mock_recent_conversations, mock_knowledge_status
+) -> None:
+    import service.service as svc
+
+    fake_secret = SimpleNamespace(get_secret_value=lambda: "secret")
+    with (
+        patch.object(svc.settings, "BEFOREST_OPS_PASSWORD", fake_secret),
+        patch.object(svc.settings, "AUTH_SECRET", None),
+        patch.object(svc.settings, "AGENT_SHARED_SECRET", None),
+    ):
+        cookie_value = svc._beforest_ops_cookie_value()
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/admin/beforest/analytics",
+                "query_string": b"limit=120",
+                "headers": [
+                    (b"cookie", f"{svc.BEFOREST_OPS_COOKIE_NAME}={cookie_value}".encode())
+                ],
+            }
+        )
+        mock_recent_conversations.return_value = [
+            {
+                "contactId": "12345",
+                "name": "Aditi",
+                "instagramAccountName": "aditi.travels",
+                "message": "I want to stay with my family for a weekend.",
+                "agentReplyText": "Check https://hospitality.beforest.co for family stay options.",
+                "receivedAt": 1_711_234_567.0,
+                "agentReplyAt": 1_711_234_570.0,
+                "handoverStatus": "bot",
+            },
+            {
+                "contactId": "67890",
+                "name": "Nikhil",
+                "message": "Can we discuss a creator collaboration?",
+                "agentReplyText": "Email hello@beforest.co with your creator details.",
+                "receivedAt": 1_711_234_667.0,
+                "agentReplyAt": 1_711_234_671.0,
+                "handoverStatus": "human",
+            },
+        ]
+        mock_knowledge_status.return_value = {
+            "outlineConfigured": True,
+            "outlineResultCount": 3,
+            "outlineDocCount": 24,
+            "outlineChunkCount": 120,
+            "outlineError": "",
+            "convexConfigured": True,
+        }
+        response = await svc.beforest_analytics_page(request, limit=120)
+
+    body = response.body.decode("utf-8")
+    assert response.status_code == 200
+    assert "Live Sample" in body
+    assert "Conversations" in body
+    assert "Unique Contacts" in body
+    assert "hospitality" in body
+    assert "creator" in body
+    assert "sample=120" in body
+
+
+@pytest.mark.asyncio
 async def test_beforest_admin_login_sets_cookie() -> None:
     import service.service as svc
 
@@ -910,6 +1004,7 @@ def test_beforest_brand_asset_paths_exist() -> None:
     assert svc.BEFOREST_FAVICON_ICO_PATH.exists()
     assert svc.BEFOREST_OG_IMAGE_PATH.exists()
     assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_admin.html").exists()
+    assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_analytics.html").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.css").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("beforest_admin.js").exists()
     assert svc.SERVICE_STATIC_DIR.joinpath("favicon.ico").exists()
