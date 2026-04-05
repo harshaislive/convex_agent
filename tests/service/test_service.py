@@ -496,6 +496,70 @@ def test_build_manychat_messages_splits_long_instagram_text() -> None:
     assert all(len(message["text"]) <= 640 for message in messages)
     assert all("buttons" not in message for message in messages)
 
+
+def test_build_manychat_media_content_builds_image_then_text() -> None:
+    from service.service import _build_manychat_media_content
+
+    with patch("service.service.settings") as mock_settings:
+        mock_settings.MANYCHAT_CHANNEL = "instagram"
+        content = _build_manychat_media_content(
+            "image",
+            "https://agentig.devsharsha.live/static/beforest-favicon.png",
+            text="Here is the Beforest mark.",
+        )
+
+    assert content["type"] == "instagram"
+    assert content["messages"][0] == {
+        "type": "image",
+        "url": "https://agentig.devsharsha.live/static/beforest-favicon.png",
+    }
+    assert content["messages"][1]["type"] == "text"
+    assert content["messages"][1]["text"] == "Here is the Beforest mark."
+
+
+@pytest.mark.asyncio
+async def test_push_manychat_image_posts_media_content() -> None:
+    from service.service import _push_manychat_image
+
+    calls: list[dict] = []
+
+    async def fake_post(url: str, **kwargs):
+        calls.append({"url": url, **kwargs})
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        return response
+
+    fake_client = SimpleNamespace(post=AsyncMock(side_effect=fake_post))
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_token = SimpleNamespace(get_secret_value=lambda: "token")
+
+    with patch("service.service.settings") as mock_settings:
+        mock_settings.MANYCHAT_API_TOKEN = fake_token
+        mock_settings.MANYCHAT_API_BASE_URL = "https://api.manychat.com"
+        mock_settings.MANYCHAT_CHANNEL = "instagram"
+        with patch("service.service.httpx.AsyncClient", FakeAsyncClient):
+            await _push_manychat_image(
+                "12345",
+                "https://agentig.devsharsha.live/static/beforest-favicon.png",
+                text="Here is the Beforest mark.",
+            )
+
+    assert len(calls) == 1
+    payload = calls[0]["json"]["data"]["content"]["messages"]
+    assert payload[0]["type"] == "image"
+    assert payload[0]["url"] == "https://agentig.devsharsha.live/static/beforest-favicon.png"
+    assert payload[1]["type"] == "text"
+
 def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     from service.service import _clamp_beforest_dm_reply
 
@@ -554,7 +618,7 @@ def test_enforce_current_experiences_freshness_rewrites_past_live_claim() -> Non
 
     result = _enforce_current_experiences_freshness(message, stale_reply)
 
-    assert "can't confirm live experience dates" in result
+    assert "can't confirm the latest dated experience availability" in result
     assert "https://experiences.beforest.co" in result
     assert "Dec 14, 2025" not in result
 
@@ -581,7 +645,7 @@ def test_enforce_current_experiences_freshness_rewrites_stale_upcoming_dates() -
 
     result = _enforce_current_experiences_freshness(message, stale_upcoming_reply)
 
-    assert "can't confirm live experience dates" in result
+    assert "can't confirm the latest dated experience availability" in result
     assert "https://experiences.beforest.co" in result
     assert "Dec 14, 2025" not in result
 
@@ -597,7 +661,7 @@ def test_enforce_current_experiences_freshness_rewrites_mixed_stale_and_future_d
 
     result = _enforce_current_experiences_freshness(message, mixed_reply)
 
-    assert "can't confirm live experience dates" in result
+    assert "can't confirm the latest dated experience availability" in result
     assert "https://experiences.beforest.co" in result
 
 
@@ -613,7 +677,7 @@ def test_enforce_current_experiences_freshness_rewrites_stale_month_year_date() 
 
     result = _enforce_current_experiences_freshness(message, stale_month_year_reply)
 
-    assert "can't confirm live experience dates" in result
+    assert "can't confirm the latest dated experience availability" in result
     assert "https://experiences.beforest.co" in result
     assert "January 2026" not in result
 
@@ -626,9 +690,79 @@ def test_enforce_current_experiences_freshness_rewrites_stale_next_experience_da
 
     result = _enforce_current_experiences_freshness(message, stale_next_reply)
 
-    assert "can't confirm live experience dates" in result
+    assert "can't confirm the latest dated experience availability" in result
     assert "https://experiences.beforest.co" in result
     assert "March 1, 2026" not in result
+
+
+def test_enforce_current_experiences_freshness_rewrites_stale_discovery_reply_for_stay_session() -> None:
+    from service.service import _enforce_current_experiences_freshness
+
+    message = "Family"
+    stale_discovery_reply = (
+        "Our Family Roots experience in Coorg (Jan 2026) is perfect for reconnecting with nature."
+    )
+
+    result = _enforce_current_experiences_freshness(
+        message,
+        stale_discovery_reply,
+        session_type="stay",
+    )
+
+    assert "can't confirm the latest dated experience availability" in result
+    assert "https://experiences.beforest.co" in result
+    assert "Jan 2026" not in result
+
+
+def test_build_beforest_capture_progress_context_requests_missing_stay_details() -> None:
+    from service.service import BeforestSessionState, _build_beforest_capture_progress_context
+
+    session = BeforestSessionState(
+        session_id="sess-1",
+        status="open",
+        session_type="stay",
+        summary="Stay conversation started.",
+        last_user_goal="Family stay",
+        last_activity_at=datetime.now().timestamp(),
+    )
+    history_events = [{"message": "April"}]
+
+    result = _build_beforest_capture_progress_context(
+        session=session,
+        history_events=history_events,
+        current_message="4",
+    )
+
+    assert result is not None
+    assert "Known details: timing=April, group size=4." in result.content
+    assert "Missing details: whether this is solo, couple, family, or group." in result.content
+    assert "Do not conclude too early." in result.content
+
+
+def test_build_beforest_capture_progress_context_closes_cleanly_when_stay_basics_are_known() -> None:
+    from service.service import BeforestSessionState, _build_beforest_capture_progress_context
+
+    session = BeforestSessionState(
+        session_id="sess-2",
+        status="open",
+        session_type="stay",
+        summary="Stay conversation started.",
+        last_user_goal="Book family stay",
+        last_activity_at=datetime.now().timestamp(),
+    )
+    history_events = [{"message": "Family"}, {"message": "April"}, {"message": "4"}]
+
+    result = _build_beforest_capture_progress_context(
+        session=session,
+        history_events=history_events,
+        current_message="How to book?",
+    )
+
+    assert result is not None
+    assert "Known details: trip shape=family, timing=April, group size=4." in result.content
+    assert "Missing details: none." in result.content
+    assert "You have enough basic detail to help with booking or next steps." in result.content
+    assert "The user is showing booking intent." in result.content
 
 
 def test_derive_beforest_session_state_auto_closes_stale_confirmation() -> None:
@@ -1015,15 +1149,18 @@ async def test_beforest_admin_asset_routes_return_file_responses() -> None:
 
     stylesheet_response = await svc.beforest_admin_stylesheet()
     script_response = await svc.beforest_admin_script()
+    favicon_png_response = await svc.beforest_favicon_png()
 
     assert stylesheet_response.path == svc.BEFOREST_ADMIN_STYLESHEET_FILE_PATH
     assert script_response.path == svc.BEFOREST_ADMIN_SCRIPT_FILE_PATH
+    assert favicon_png_response.path == svc.BEFOREST_FAVICON_PNG_PATH
 
 
 def test_beforest_brand_asset_paths_exist() -> None:
     import service.service as svc
 
     assert svc.BEFOREST_FAVICON_ICO_PATH.exists()
+    assert svc.BEFOREST_FAVICON_PNG_PATH.exists()
     assert svc.BEFOREST_OG_IMAGE_PATH.exists()
     assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_admin.html").exists()
     assert svc.SERVICE_TEMPLATES_DIR.joinpath("beforest_analytics.html").exists()

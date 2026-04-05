@@ -80,12 +80,15 @@ warnings.filterwarnings("ignore", category=LangChainBetaWarning)
 logger = logging.getLogger(__name__)
 BEFOREST_OPS_COOKIE_NAME = "beforest_ops_session"
 SERVICE_DIR = Path(__file__).resolve().parent
+REPO_ROOT_DIR = SERVICE_DIR.parent.parent
 SERVICE_TEMPLATES_DIR = SERVICE_DIR / "templates"
 SERVICE_STATIC_DIR = SERVICE_DIR / "static"
 BEFOREST_FAVICON_ICO_PATH = SERVICE_STATIC_DIR / "favicon.ico"
+BEFOREST_FAVICON_PNG_PATH = REPO_ROOT_DIR / "media" / "beforest-favicon.png"
 BEFOREST_OG_IMAGE_PATH = SERVICE_STATIC_DIR / "beforest-og.jpg"
 BEFOREST_ADMIN_STYLESHEET_PATH = "/static/beforest_admin.css"
 BEFOREST_ADMIN_SCRIPT_PATH = "/static/beforest_admin.js"
+BEFOREST_FAVICON_PNG_ROUTE_PATH = "/static/beforest-favicon.png"
 BEFOREST_ADMIN_STYLESHEET_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.css"
 BEFOREST_ADMIN_SCRIPT_FILE_PATH = SERVICE_STATIC_DIR / "beforest_admin.js"
 templates = Jinja2Templates(directory=str(SERVICE_TEMPLATES_DIR))
@@ -550,6 +553,21 @@ class BeforestReplyResponse(BaseModel):
     handover_status: str = "bot"
 
 
+class BeforestMediaSendRequest(BaseModel):
+    manychat_subscriber_id: str
+    media_type: Literal["image", "video"]
+    media_url: str
+    text: str = ""
+    subscriber_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class BeforestMediaSendResponse(BaseModel):
+    ok: bool
+    manychat_subscriber_id: str
+    media_type: str
+    media_url: str
+
+
 class BeforestHandoverRequest(BaseModel):
     status: Literal["bot", "human", "paused"]
     contact_id: str | None = None
@@ -593,6 +611,20 @@ _CURRENT_EXPERIENCE_QUERY_HINTS = (
     "upcoming",
     "available",
     "latest",
+)
+_EXPERIENCE_DISCOVERY_QUERY_HINTS = (
+    "experience",
+    "experiences",
+    "retreat",
+    "retreats",
+    "workshop",
+    "workshops",
+    "book",
+    "booking",
+    "family",
+    "adventure",
+    "nature",
+    "camping",
 )
 _BEFOREST_SESSION_TYPE_KEYWORDS: dict[str, tuple[str, ...]] = {
     "creator": ("creator", "influencer", "coverage", "filmmaker", "reels", "content"),
@@ -694,6 +726,13 @@ def _is_current_experiences_query(message: str) -> bool:
     return any(hint in lowered for hint in _CURRENT_EXPERIENCE_QUERY_HINTS)
 
 
+def _is_experience_discovery_query(message: str, *, session_type: str = "") -> bool:
+    lowered = message.lower()
+    if session_type in {"experience", "stay"}:
+        return True
+    return any(hint in lowered for hint in _EXPERIENCE_DISCOVERY_QUERY_HINTS)
+
+
 def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
     parsed_dates: list[date] = []
     seen_dates: set[date] = set()
@@ -743,8 +782,16 @@ def _extract_dates_from_text(text: str, *, today: date) -> list[date]:
     return parsed_dates
 
 
-def _enforce_current_experiences_freshness(message: str, reply_text: str) -> str:
-    if not _is_current_experiences_query(message):
+def _enforce_current_experiences_freshness(
+    message: str,
+    reply_text: str,
+    *,
+    session_type: str = "",
+) -> str:
+    if not (
+        _is_current_experiences_query(message)
+        or _is_experience_discovery_query(message, session_type=session_type)
+    ):
         return reply_text
 
     today = datetime.now(UTC).date()
@@ -753,11 +800,135 @@ def _enforce_current_experiences_freshness(message: str, reply_text: str) -> str
         return reply_text
     if any(parsed_date < today for parsed_date in parsed_dates):
         return (
-            "I can't confirm live experience dates here right now. "
-            "Please check https://experiences.beforest.co for the latest upcoming listings."
+            "I can't confirm the latest dated experience availability here right now. "
+            "Please check https://experiences.beforest.co for current listings, or tell me what kind of plan you're considering and I can help narrow it."
         )
 
     return reply_text
+
+
+def _extract_beforest_group_size(message: str) -> str:
+    stripped = message.strip().lower()
+    if re.fullmatch(r"\d{1,2}", stripped):
+        value = int(stripped)
+        if 1 <= value <= 24:
+            return str(value)
+
+    match = re.search(
+        r"\b(group of|family of|party of|we are|we're|it is for)\s+(\d{1,2})\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        value = int(match.group(2))
+        if 1 <= value <= 24:
+            return str(value)
+    return ""
+
+
+def _extract_beforest_timing_hint(message: str) -> str:
+    today = datetime.now(UTC).date()
+    dates = _extract_dates_from_text(message, today=today)
+    if dates:
+        first_date = dates[0]
+        return first_date.isoformat()
+    month_match = _MONTH_YEAR_RE.search(message) or re.search(
+        r"\b("
+        r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+        r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+        r"Nov(?:ember)?|Dec(?:ember)?"
+        r")\b",
+        message,
+        flags=re.IGNORECASE,
+    )
+    if month_match:
+        return month_match.group(0)
+    return ""
+
+
+def _extract_beforest_trip_shape(message: str) -> str:
+    lowered = message.lower()
+    if "family" in lowered:
+        return "family"
+    if "couple" in lowered:
+        return "couple"
+    if "solo" in lowered:
+        return "solo"
+    if "group" in lowered:
+        return "group"
+    return ""
+
+
+def _build_beforest_capture_progress_context(
+    *,
+    session: BeforestSessionState | None,
+    history_events: list[dict[str, Any]],
+    current_message: str,
+) -> SystemMessage | None:
+    session_type = session.session_type if session is not None else _infer_beforest_session_type(current_message)
+    if session_type not in {"stay", "experience"}:
+        return None
+
+    user_messages: list[str] = []
+    for item in history_events:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("message", "") or "").strip()
+        if text:
+            user_messages.append(text)
+    if current_message.strip():
+        user_messages.append(current_message.strip())
+
+    timing_hint = ""
+    group_size = ""
+    trip_shape = ""
+    booking_intent = False
+    for text in user_messages:
+        if not timing_hint:
+            timing_hint = _extract_beforest_timing_hint(text)
+        if not group_size:
+            group_size = _extract_beforest_group_size(text)
+        if not trip_shape:
+            trip_shape = _extract_beforest_trip_shape(text)
+        if re.search(r"\b(book|booking|how to book|availability|available|price|cost)\b", text, flags=re.IGNORECASE):
+            booking_intent = True
+
+    known: list[str] = []
+    missing: list[str] = []
+    if trip_shape:
+        known.append(f"trip shape={trip_shape}")
+    else:
+        missing.append("whether this is solo, couple, family, or group")
+    if timing_hint:
+        known.append(f"timing={timing_hint}")
+    else:
+        missing.append("dates or month")
+    if group_size:
+        known.append(f"group size={group_size}")
+    else:
+        missing.append("group size")
+
+    lines = [
+        "Beforest lead-capture progress for stay/experience flow.",
+        f"Known details: {', '.join(known) if known else 'none yet'}.",
+        f"Missing details: {', '.join(missing) if missing else 'none'}.",
+    ]
+    if missing:
+        lines.append(
+            "Keep the thread going and ask for the single most useful missing detail next. "
+            "Do not conclude too early."
+        )
+    else:
+        lines.append(
+            "You have enough basic detail to help with booking or next steps. "
+            "Answer clearly, then close with one light question like whether they want more details or help with the next step."
+        )
+    if booking_intent:
+        lines.append(
+            "The user is showing booking intent. If a valid live route is known, share it, but still keep the close natural and brief."
+        )
+
+    return SystemMessage(content="\n".join(lines))
 
 
 def _clamp_beforest_dm_reply(text: str) -> str:
@@ -1514,6 +1685,36 @@ def _build_manychat_content(
     }
 
 
+def _build_manychat_media_messages(
+    media_type: Literal["image", "video"],
+    media_url: str,
+    *,
+    text: str = "",
+) -> list[dict[str, Any]]:
+    cleaned_url = str(media_url).strip()
+    if not cleaned_url:
+        raise ValueError("media_url is required")
+    messages: list[dict[str, Any]] = [{"type": media_type, "url": cleaned_url}]
+    normalized_text = re.sub(r"\s+", " ", text).strip()
+    if normalized_text:
+        messages.extend({"type": "text", "text": chunk} for chunk in _split_manychat_text(normalized_text))
+    return messages
+
+
+def _build_manychat_media_content(
+    media_type: Literal["image", "video"],
+    media_url: str,
+    *,
+    text: str = "",
+) -> dict[str, Any]:
+    return {
+        "type": settings.MANYCHAT_CHANNEL,
+        "messages": _build_manychat_media_messages(media_type, media_url, text=text),
+        "actions": [],
+        "quick_replies": [],
+    }
+
+
 async def _post_manychat_content(
     client: httpx.AsyncClient,
     *,
@@ -1536,6 +1737,44 @@ async def _post_manychat_content(
             "Content-Type": "application/json",
         },
     )
+
+
+async def _push_manychat_media(
+    subscriber_id: str,
+    media_type: Literal["image", "video"],
+    media_url: str,
+    *,
+    text: str = "",
+) -> None:
+    if not settings.MANYCHAT_API_TOKEN:
+        return
+
+    content = _build_manychat_media_content(media_type, media_url, text=text)
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await _post_manychat_content(
+            client,
+            subscriber_id=subscriber_id,
+            content=content,
+        )
+        response.raise_for_status()
+
+
+async def _push_manychat_image(
+    subscriber_id: str,
+    image_url: str,
+    *,
+    text: str = "",
+) -> None:
+    await _push_manychat_media(subscriber_id, "image", image_url, text=text)
+
+
+async def _push_manychat_video(
+    subscriber_id: str,
+    video_url: str,
+    *,
+    text: str = "",
+) -> None:
+    await _push_manychat_media(subscriber_id, "video", video_url, text=text)
 
 
 async def _push_manychat_reply(
@@ -1624,9 +1863,16 @@ async def _generate_beforest_reply_text(
         prior_session,
         current_message=request.message,
     )
+    capture_progress_context = _build_beforest_capture_progress_context(
+        session=prior_session,
+        history_events=history_events if continue_existing_session else [],
+        current_message=request.message,
+    )
     input_messages: list[HumanMessage | AIMessage | SystemMessage] = []
     if session_context is not None:
         input_messages.append(session_context)
+    if capture_progress_context is not None:
+        input_messages.append(capture_progress_context)
     input_messages.extend(history_messages)
     input_messages.append(HumanMessage(content=request.message))
     kwargs["input"] = {"messages": input_messages}
@@ -1643,7 +1889,11 @@ async def _generate_beforest_reply_text(
 
     reply_text = _clamp_beforest_dm_reply(
         _normalize_beforest_dm_voice(
-            _enforce_current_experiences_freshness(request.message, output.content)
+            _enforce_current_experiences_freshness(
+                request.message,
+                output.content,
+                session_type=prior_session.session_type if prior_session is not None else "",
+            )
         )
     )
     next_session = _next_beforest_session_state(
@@ -1737,6 +1987,11 @@ async def knowledge_health() -> dict[str, object]:
 @app.get("/favicon.ico", include_in_schema=False)
 async def beforest_favicon() -> FileResponse:
     return FileResponse(BEFOREST_FAVICON_ICO_PATH, media_type="image/x-icon")
+
+
+@app.get(BEFOREST_FAVICON_PNG_ROUTE_PATH, include_in_schema=False)
+async def beforest_favicon_png() -> FileResponse:
+    return FileResponse(BEFOREST_FAVICON_PNG_PATH, media_type="image/png")
 
 
 @app.get(BEFOREST_ADMIN_STYLESHEET_PATH, include_in_schema=False)
@@ -2084,6 +2339,28 @@ async def beforest_reply(
         reply=reply_text,
         thread_id=resolved_thread_id,
         handover_status=handover_status,
+    )
+
+
+@router.post("/beforest/media/send")
+async def beforest_send_media(request: BeforestMediaSendRequest) -> BeforestMediaSendResponse:
+    if request.media_type == "image":
+        await _push_manychat_image(
+            request.manychat_subscriber_id,
+            request.media_url,
+            text=request.text,
+        )
+    else:
+        await _push_manychat_video(
+            request.manychat_subscriber_id,
+            request.media_url,
+            text=request.text,
+        )
+    return BeforestMediaSendResponse(
+        ok=True,
+        manychat_subscriber_id=request.manychat_subscriber_id,
+        media_type=request.media_type,
+        media_url=request.media_url,
     )
 
 
