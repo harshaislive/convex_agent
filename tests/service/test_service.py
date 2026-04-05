@@ -420,6 +420,14 @@ def test_build_manychat_content_uses_collective_specific_caption() -> None:
     assert content["messages"][0]["buttons"][0]["caption"] == "Explore Hammiyala"
 
 
+def test_build_manychat_content_uses_watch_on_youtube_caption() -> None:
+    from service.service import _build_manychat_content
+
+    content = _build_manychat_content("Watch this https://youtu.be/dQw4w9WgXcQ")
+
+    assert content["messages"][0]["buttons"][0]["caption"] == "Watch on YouTube"
+
+
 def test_build_manychat_content_enriches_typeform_tracking() -> None:
     from service.service import _build_manychat_content
 
@@ -559,6 +567,65 @@ async def test_push_manychat_image_posts_media_content() -> None:
     assert payload[0]["type"] == "image"
     assert payload[0]["url"] == "https://agentig.devsharsha.live/static/beforest-favicon.png"
     assert payload[1]["type"] == "text"
+
+
+@pytest.mark.asyncio
+async def test_push_manychat_youtube_posts_link_content_with_button() -> None:
+    from service.service import _push_manychat_youtube
+
+    calls: list[dict] = []
+
+    async def fake_post(url: str, **kwargs):
+        calls.append({"url": url, **kwargs})
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        return response
+
+    fake_client = SimpleNamespace(post=AsyncMock(side_effect=fake_post))
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return fake_client
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_token = SimpleNamespace(get_secret_value=lambda: "token")
+
+    with patch("service.service.settings") as mock_settings:
+        mock_settings.MANYCHAT_API_TOKEN = fake_token
+        mock_settings.MANYCHAT_API_BASE_URL = "https://api.manychat.com"
+        mock_settings.MANYCHAT_CHANNEL = "instagram"
+        with patch("service.service.httpx.AsyncClient", FakeAsyncClient):
+            await _push_manychat_youtube(
+                "12345",
+                "https://youtu.be/dQw4w9WgXcQ",
+                text="Watch this clip.",
+                subscriber_data={"username": "harsha.live"},
+            )
+
+    assert len(calls) == 1
+    payload = calls[0]["json"]["data"]["content"]["messages"]
+    assert payload[0]["type"] == "text"
+    assert payload[0]["text"] == "Watch this clip."
+    assert payload[0]["buttons"][0]["caption"] == "Watch on YouTube"
+    assert "youtu.be/dQw4w9WgXcQ" in payload[0]["buttons"][0]["url"]
+
+
+@pytest.mark.asyncio
+async def test_push_manychat_youtube_rejects_non_youtube_link() -> None:
+    from service.service import _push_manychat_youtube
+
+    with pytest.raises(ValueError):
+        await _push_manychat_youtube(
+            "12345",
+            "https://vimeo.com/123456",
+            text="Watch this clip.",
+        )
 
 def test_clamp_beforest_dm_reply_prefers_short_sentences() -> None:
     from service.service import _clamp_beforest_dm_reply
@@ -1659,3 +1726,28 @@ async def test_beforest_reply_rejects_background_push_without_manychat_subscribe
 
     assert getattr(exc_info.value, "status_code", None) == 422
     assert "manychat_subscriber_id" in str(getattr(exc_info.value, "detail", ""))
+
+
+@pytest.mark.asyncio
+@patch("service.service._push_manychat_youtube", new_callable=AsyncMock)
+async def test_beforest_send_media_supports_youtube_links(mock_push_manychat_youtube) -> None:
+    from service.service import BeforestMediaSendRequest, beforest_send_media
+
+    response = await beforest_send_media(
+        BeforestMediaSendRequest(
+            manychat_subscriber_id="12345",
+            media_type="youtube",
+            media_url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            text="Watch this.",
+            subscriber_data={"instagram_user_id": "ig-7710"},
+        )
+    )
+
+    assert response.ok is True
+    assert response.media_type == "youtube"
+    mock_push_manychat_youtube.assert_awaited_once_with(
+        "12345",
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        text="Watch this.",
+        subscriber_data={"instagram_user_id": "ig-7710"},
+    )

@@ -555,7 +555,7 @@ class BeforestReplyResponse(BaseModel):
 
 class BeforestMediaSendRequest(BaseModel):
     manychat_subscriber_id: str
-    media_type: Literal["image", "video"]
+    media_type: Literal["image", "video", "youtube"]
     media_url: str
     text: str = ""
     subscriber_data: dict[str, Any] = Field(default_factory=dict)
@@ -1562,6 +1562,8 @@ def _normalize_beforest_dm_voice(reply_text: str) -> str:
 
 def _button_caption_for_url(url: str) -> str:
     lower_url = url.lower()
+    if "youtube.com" in lower_url or "youtu.be" in lower_url:
+        return "Watch on YouTube"
     if "form.typeform.com" in lower_url:
         return "Show Interest"
     if "/co-forest/" in lower_url:
@@ -1715,6 +1717,17 @@ def _build_manychat_media_content(
     }
 
 
+def _is_youtube_url(url: str) -> bool:
+    cleaned_url = str(url).strip()
+    if not cleaned_url:
+        return False
+    parsed = urllib.parse.urlsplit(cleaned_url)
+    hostname = (parsed.netloc or "").lower()
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    return hostname in {"youtube.com", "m.youtube.com", "youtu.be"}
+
+
 async def _post_manychat_content(
     client: httpx.AsyncClient,
     *,
@@ -1775,6 +1788,25 @@ async def _push_manychat_video(
     text: str = "",
 ) -> None:
     await _push_manychat_media(subscriber_id, "video", video_url, text=text)
+
+
+async def _push_manychat_youtube(
+    subscriber_id: str,
+    youtube_url: str,
+    *,
+    text: str = "",
+    subscriber_data: dict[str, Any] | None = None,
+) -> None:
+    cleaned_url = str(youtube_url).strip()
+    if not _is_youtube_url(cleaned_url):
+        raise ValueError("youtube media_url must be a youtube.com or youtu.be link")
+    normalized_text = re.sub(r"\s+", " ", text).strip()
+    reply_text = f"{normalized_text} {cleaned_url}".strip() if normalized_text else f"Watch here {cleaned_url}"
+    await _push_manychat_reply(
+        subscriber_id,
+        reply_text,
+        subscriber_data=subscriber_data,
+    )
 
 
 async def _push_manychat_reply(
@@ -2350,11 +2382,18 @@ async def beforest_send_media(request: BeforestMediaSendRequest) -> BeforestMedi
             request.media_url,
             text=request.text,
         )
-    else:
+    elif request.media_type == "video":
         await _push_manychat_video(
             request.manychat_subscriber_id,
             request.media_url,
             text=request.text,
+        )
+    else:
+        await _push_manychat_youtube(
+            request.manychat_subscriber_id,
+            request.media_url,
+            text=request.text,
+            subscriber_data=request.subscriber_data,
         )
     return BeforestMediaSendResponse(
         ok=True,
