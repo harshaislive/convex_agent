@@ -1048,6 +1048,8 @@ def test_beforest_operating_context_message_includes_collective_rules() -> None:
     assert "hello@beforest.co" in result.content
     assert "show interest" in result.content
     assert "Default collective routing: send the relevant collective page first." in result.content
+    assert "CARE means: Context, Aspiration, Reality, Engagement." in result.content
+    assert "Do not push the website too early if the user is willing to continue in DM." in result.content
     assert "form.typeform.com/to/CYae8hmZ" not in result.content
 
 
@@ -1059,6 +1061,20 @@ def test_beforest_operating_context_message_includes_typeform_for_high_intent() 
     assert result is not None
     assert "form.typeform.com/to/CYae8hmZ" in result.content
     assert "form.typeform.com/to/i8eBLQkz" in result.content
+
+
+def test_beforest_operating_context_message_includes_lead_capture_guidance_for_creator() -> None:
+    from agents.beforest_agent import _beforest_operating_context_message
+
+    result = _beforest_operating_context_message(
+        "I am a creator and want to collaborate on a stay."
+    )
+
+    assert result is not None
+    assert "CARE means: Context, Aspiration, Reality, Engagement." in result.content
+    assert "Do not push the website too early if the user is willing to continue in DM." in result.content
+    assert "- Creator: ask niche, platform, audience size band, collaboration type, and timeline." in result.content
+    assert "- Stay / hospitality: ask stay type, solo/couple/family/group, dates or month, location preference, and readiness." in result.content
 
 
 def test_beforest_agent_tools_do_not_expose_outline_sync_directly() -> None:

@@ -73,6 +73,27 @@ _ROUTING_QUERY_TERMS = (
     "facebook",
     "social",
 )
+_LEAD_CAPTURE_QUERY_TERMS = (
+    "family",
+    "couple",
+    "solo",
+    "weekend",
+    "dates",
+    "date",
+    "month",
+    "budget",
+    "timeline",
+    "retreat",
+    "event",
+    "host",
+    "offsite",
+    "group",
+    "workshop",
+    "stay",
+    "creator",
+    "partnership",
+    "collaboration",
+)
 _COLLECTIVE_INTEREST_LINKS = {
     "bhopal": "https://form.typeform.com/to/CYae8hmZ?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_time_spent=xxxxx#device=xxxxx&intent_copy=xxxxx&distraction_score=xxxxx&first_visit=xxxxx&total_visits=xxxxx&behavioral_journey=xxxxx&current_page=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
     "poomaale 2.0": "https://form.typeform.com/to/i8eBLQkz?utm_source=xxxxx&utm_medium=xxxxx&utm_content=xxxxx&utm_time_spent=xxxxx#current_page=xxxxx&behavioral_journey=xxxxx&total_visits=xxxxx&first_visit=xxxxx&distraction_score=xxxxx&intent_copy=xxxxx&device=xxxxx&rage_clicks=xxxxx&confusion_score=xxxxx",
@@ -158,7 +179,12 @@ def _beforest_operating_context_message(question: str) -> SystemMessage | None:
     lowered = question.lower()
     if not any(
         term in lowered
-        for term in (*_COLLECTIVE_QUERY_TERMS, *_CONTACT_QUERY_TERMS, *_ROUTING_QUERY_TERMS)
+        for term in (
+            *_COLLECTIVE_QUERY_TERMS,
+            *_CONTACT_QUERY_TERMS,
+            *_ROUTING_QUERY_TERMS,
+            *_LEAD_CAPTURE_QUERY_TERMS,
+        )
     ):
         return None
 
@@ -190,6 +216,21 @@ def _beforest_operating_context_message(question: str) -> SystemMessage | None:
         f"- Beforest Facebook: {_FAST_LINKS['beforest_facebook']}",
         f"- Bewild Instagram: {_FAST_LINKS['bewild_instagram']}",
         "Default non-signup contact route is hello@beforest.co or https://beforest.co/call-mail/.",
+        "Lead capture approach: use a lightweight CARE framework in DM.",
+        "CARE means: Context, Aspiration, Reality, Engagement.",
+        "Answer first, then ask only one follow-up question at a time.",
+        "Keep qualification conversational. Do not sound like a form, SDR, or scripted sales bot.",
+        "Do not push the website too early if the user is willing to continue in DM.",
+        "Capture useful detail inside Instagram first, then route or hand over when needed.",
+        "Use restrained emotional attunement: briefly reflect what they want or feel, but never sound flowery or ad-like.",
+        "When qualifying, prefer practical next questions over generic enthusiasm.",
+        "Intent-specific capture guidance:",
+        "- Stay / hospitality: ask stay type, solo/couple/family/group, dates or month, location preference, and readiness.",
+        "- Collective: ask whether they are exploring or serious, family status, timeline, city, and which collective draws them.",
+        "- Creator: ask niche, platform, audience size band, collaboration type, and timeline.",
+        "- Partnership: ask brand/company, collaboration goal, geography, timeline, and desired next step.",
+        "- Event / retreat host: ask event type, group size, dates or month, location preference, and planning stage.",
+        "- Product / Bewild: clarify product interest and whether they want browsing help or direct assistance.",
     ]
     if signup_intent:
         lines.extend(
